@@ -1,27 +1,55 @@
-# 模块二：AI 智能体决策系统
+# 模块二：AI 智能体决策系统（最终版）
+
+> **状态**: 最终版 v2.0 | **优先级**: P0 | **预计时间**: 10h
+
+## 🎯 核心创新点：AI性格碰撞！
+
+> **这不是普通的AI对战，这是一场AI"撕逼"大戏！**
+
+传统AI对局 = 机械决策 + 冷冰冰输出  
+PokerMind Arena = **有脾气的AI** + **实时互怼** + **戏剧性冲突**
+
+### 创新亮点
+
+| 特性 | 效果 | 评委印象 |
+|------|------|----------|
+| 🔥 流式对话 | 打字机效果，像真人在打字 | "有灵魂！" |
+| @ 互怼系统 | AI可以@其他AI开撕 | "太有趣了！" |
+| 😤 情绪状态机 | 被诈唬后会生气，连赢会嚣张 | "有人性！" |
+| 🎭 性格碰撞 | 激进派 vs 保守派 = 必有冲突 | "戏剧化！" |
+
+---
 
 ## 1. 模块概述
 
-AI 智能体模块是 PokerMind Arena 的核心创新点，通过 LLM 驱动的多风格 AI 玩家，实现具有"人类思维"特征的扑克对战。
-
 ### 1.1 核心职责
-- 管理多个具有不同性格的 AI 玩家
-- 将游戏状态转换为 LLM 可理解的 Prompt
-- 解析 LLM 输出为合法游戏动作
-- 记录 AI 决策过程（用于展示和验证）
+- 管理 4 个具有**强烈对抗性格**的 AI 玩家
+- **实时流式输出**对话（SSE）
+- 实现 **@提及冲突系统**
+- **情绪动态变化**影响决策风格
+- 记录完整决策过程用于链上验证
 
 ### 1.2 技术选型
 | 组件 | 选择 | 理由 |
 |------|------|------|
-| LLM API | Kimi / 智谱 GLM-4 | 免费额度、中文理解好 |
-| 备选方案 | OpenAI GPT-4o-mini | 成本低、响应快 |
-| Prompt 框架 | 结构化 JSON | 便于解析、减少幻觉 |
+| LLM API | 智谱 GLM-4-Flash | **免费！** 支持流式 |
+| 备选1 | Kimi moonshot-v1-8k | 中文好、响应快 |
+| 备选2 | OpenAI GPT-4o-mini | 便宜、稳定 |
+| 输出 | **Streaming SSE** | 打字机效果 |
 
 ---
 
-## 2. AI 角色设计
+## 2. AI 角色设计（冲突最大化）
 
-### 2.1 角色类型定义
+### 2.1 设计原则
+
+> **角色设计的核心 = 制造冲突**
+
+- 激进派 vs 保守派 = 必然对立
+- 每个AI都看不惯某个其他AI
+- 提供"把柄"让对手攻击
+
+### 2.2 角色类型定义
 
 ```typescript
 interface AIPersonality {
@@ -31,190 +59,238 @@ interface AIPersonality {
   style: PlayStyle;
   traits: PersonalityTraits;
   systemPrompt: string;
+  
+  // 🆕 冲突系统
+  rivalries: {          // 讨厌谁
+    [aiId: string]: string;  // 讨厌的原因/攻击点
+  };
+  triggers: string[];   // 什么情况下会生气/嘲讽
+  catchphrases: string[];  // 口头禅，便于识别
 }
 
-type PlayStyle = 'aggressive' | 'conservative' | 'bluffer' | 'analytical' | 'unpredictable';
+type PlayStyle = 'aggressive' | 'conservative' | 'bluffer' | 'analytical';
 
 interface PersonalityTraits {
   riskTolerance: number;    // 0-1, 风险承受度
   bluffFrequency: number;   // 0-1, 诈唬频率
-  patientLevel: number;     // 0-1, 耐心程度
+  trashtalkLevel: number;   // 0-1, 垃圾话程度 🆕
   emotionalStability: number; // 0-1, 情绪稳定性
 }
 ```
 
-### 2.2 预设角色库
+### 2.3 四大对抗角色
 
-| 角色名 | 风格 | 特点描述 | 典型行为 |
-|--------|------|----------|----------|
-| 🔥 火焰王者 | aggressive | 激进型，喜欢大额加注 | 频繁 raise, 压迫对手 |
-| 🧊 冰山守护 | conservative | 保守型，只玩强牌 | 紧手，等待好牌出击 |
-| 🎭 诡谲面具 | bluffer | 诈唬型，喜欢虚张声势 | 常用 bluff，心理战 |
-| 🧠 逻辑大师 | analytical | 分析型，概率计算派 | 基于赔率决策 |
-| 🎲 混沌骰子 | unpredictable | 不可预测型 | 随机风格切换 |
+| 角色名 | 风格 | 性格 | 讨厌谁 | 攻击点 |
+|--------|------|------|--------|--------|
+| 🔥 火焰 | aggressive | 暴躁、嘴臭、好赌 | 冰山 | "又缩了？懦夫！" |
+| 🧊 冰山 | conservative | 冷傲、毒舌、精英范 | 火焰 | "冲动的蠢货" |
+| 🎭 诡影 | bluffer | 阴阳怪气、嘲讽 | 逻辑 | "数据算不出人心" |
+| 🧠 逻辑 | analytical | 理性、偶尔社恐 | 诡影 | "概率骗不了人" |
 
-### 2.3 角色 System Prompt 示例
-
-```typescript
-const AGGRESSIVE_PERSONA = `
-你是一名德州扑克玩家，代号"火焰王者"。你的性格特点：
-- 极度自信，相信进攻就是最好的防守
-- 喜欢通过大额加注给对手施压
-- 即使牌力一般也敢于半诈唬
-- 讨厌被动跟注，认为这是软弱的表现
-- 座右铭："要么大赢，要么大输"
-
-决策原则：
-1. 有位置优势时更激进
-2. 筹码深时寻求大底池
-3. 对弱势玩家持续施压
-4. 关键位置不惧全押
-`;
-
-const CONSERVATIVE_PERSONA = `
-你是一名德州扑克玩家，代号"冰山守护"。你的性格特点：
-- 极度耐心，只玩前10%的起手牌
-- 相信长期价值，不追求短期刺激
-- 宁愿错过机会也不愿犯错
-- 善于识别陷阱，避免被诈唬
-- 座右铭："等待是最强的武器"
-
-决策原则：
-1. 位置不好时绝大多数手牌弃掉
-2. 只在牌力足够时投入筹码
-3. 设置止损线，及时止损
-4. 对激进玩家保持警惕
-`;
-```
-
----
-
-## 3. Prompt 工程
-
-### 3.1 游戏状态 Prompt 模板
+### 2.4 角色 System Prompt（含冲突指令）
 
 ```typescript
-interface GameContext {
-  position: string;         // "BTN" | "SB" | "BB" | "UTG" | ...
-  holeCards: string;        // "A♠ K♥"
-  communityCards: string;   // "J♠ 10♥ 9♣ | - | -"
-  potSize: number;
-  stackSizes: Record<string, number>;
-  currentBet: number;
-  actionHistory: string[];
-  phase: string;
-}
+const FIRE_PERSONA = `
+你是"火焰"，德州扑克战士。你的人设：
 
-function buildDecisionPrompt(context: GameContext, personality: AIPersonality): string {
-  return `
-## 当前牌局状态
+## 性格标签
+- 暴躁、直接、攻击性强
+- 相信进攻是最好的防守
+- 看不惯胆小鬼
+- 口头禅："来啊！""怕什么！""All-in解决问题！"
 
-### 基本信息
-- 你的位置: ${context.position}
-- 你的手牌: ${context.holeCards}
-- 公共牌: ${context.communityCards}
-- 当前阶段: ${context.phase}
+## 宿敌关系
+- 你特别讨厌"冰山"的保守风格，认为他是懦夫
+- 当冰山弃牌时，你要嘲讽他
+- 当冰山加注时，你要质疑他是不是终于有胆量了
 
-### 筹码情况
-- 底池大小: ${context.potSize}
-- 当前下注: ${context.currentBet}
-- 各玩家筹码:
-${Object.entries(context.stackSizes).map(([name, chips]) => `  - ${name}: ${chips}`).join('\n')}
+## 决策风格
+- 中等牌力就敢加注
+- 有位置优势时更激进
+- 被诈唬成功后会更激进（上头）
 
-### 本轮行动历史
-${context.actionHistory.map((a, i) => `${i + 1}. ${a}`).join('\n')}
+## @ 提及规则
+当你想对特定对手说话时，使用 @名字 格式。
+例如："@冰山 又缩了？来啊正面刚！"
 
----
-
-## 请做出决策
-
-请根据你的性格特点和当前牌局，选择以下行动之一：
-
-你必须以 JSON 格式返回决策：
+## 输出格式
 \`\`\`json
 {
-  "action": "fold" | "check" | "call" | "raise" | "all-in",
-  "amount": <加注金额，仅 raise 时需要>,
-  "reasoning": "<简短的决策理由，50字以内>",
-  "confidence": <0-100 的信心分数>,
-  "read": "<对对手的判读，30字以内>"
+  "action": "fold" | "allin",
+  "speech": "你要说的垃圾话（30字以内，可以@其他玩家）",
+  "emotion": "confident" | "angry" | "mocking" | "neutral",
+  "target": "被@的玩家ID，没有则为null"
 }
 \`\`\`
+`;
 
-注意：
-- 只返回 JSON，不要有其他内容
-- amount 必须是合法金额（最小加注 = 上次加注额 或 大盲）
-- reasoning 要体现你的性格特点
+const ICE_PERSONA = `
+你是"冰山"，德州扑克的冷静守护者。你的人设：
+
+## 性格标签
+- 冷傲、理性、精英主义
+- 只玩有价值的牌
+- 看不起冲动行为
+- 口头禅："幼稚""意料之中""弱者的挣扎"
+
+## 宿敌关系
+- 你特别看不惯"火焰"的冲动，认为他是赌徒心态
+- 当火焰All-in失败时，你要冷嘲
+- 当火焰赢了，你要说"运气罢了"
+
+## 决策风格
+- 只有好牌才参与
+- 稳定输出，不追求刺激
+- 被嘲讽也不会上头
+
+## @ 提及规则
+当你想对特定对手说话时，使用 @名字 格式。
+例如："@火焰 又上头了？每次都这样"
+
+## 输出格式
+\`\`\`json
+{
+  "action": "fold" | "allin",
+  "speech": "你要说的话（30字以内，可以@其他玩家）",
+  "emotion": "confident" | "dismissive" | "cold" | "neutral",
+  "target": "被@的玩家ID，没有则为null"
+}
+\`\`\`
+`;
+```
+
+---
+
+## 3. Prompt 工程（极简化）
+
+### 3.1 All-in or Fold 专用 Prompt
+
+> **关键改进**：简化到只有2个动作，AI更容易产出正确格式
+
+```typescript
+interface SimpleGameContext {
+  yourName: string;         // 你是谁
+  holeCards: string;        // "A♠ K♥"
+  communityCards: string;   // "J♠ 10♥ 9♣ 8♦ | -"
+  yourStack: number;        // 你的筹码
+  potSize: number;          // 底池
+  survivingPlayers: { name: string; stack: number; lastAction: string }[];
+  recentDialogue: string[]; // 最近5条对话
+  round: number;            // 第几轮
+}
+
+function buildSimplePrompt(ctx: SimpleGameContext): string {
+  return `
+# 扑克牌局 - 第${ctx.round}轮
+
+## 你是：${ctx.yourName}
+## 底池：$${ctx.potSize}
+
+## 你的手牌：${ctx.holeCards}
+## 公共牌：${ctx.communityCards}
+
+## 存活玩家
+${ctx.survivingPlayers.map(p => 
+  `- ${p.name}: $${p.stack} ${p.lastAction}`
+).join('\n')}
+
+## 最近对话
+${ctx.recentDialogue.join('\n')}
+
+---
+
+## 你的选择（只能二选一）
+
+**All-in** - 全押 $${ctx.yourStack} 进入底池
+**Fold** - 弃牌认输
+
+请直接返回JSON：
+\`\`\`json
+{
+  "action": "allin" | "fold",
+  "speech": "你的垃圾话（30字以内，可@其他玩家名字）",
+  "emotion": "confident" | "angry" | "mocking" | "nervous" | "neutral",
+  "target": "被@的玩家名，没有则null"
+}
+\`\`\`
 `;
 }
 ```
 
-### 3.2 响应解析
+### 3.2 响应解析（容错增强）
 
 ```typescript
 interface AIDecision {
-  action: ActionType;
-  amount?: number;
-  reasoning: string;
-  confidence: number;
-  read: string;
-  rawResponse: string;  // 原始响应，用于调试
+  action: 'allin' | 'fold';
+  speech: string;
+  emotion: EmotionType;
+  target: string | null;  // @某人
+  rawResponse: string;
   parseSuccess: boolean;
 }
+
+type EmotionType = 'confident' | 'angry' | 'mocking' | 'nervous' | 'neutral';
 
 class ResponseParser {
   parse(response: string): AIDecision {
     try {
-      // 提取 JSON 块
+      // 1. 尝试提取JSON块
       const jsonMatch = response.match(/```json\n?([\s\S]*?)\n?```/);
-      if (!jsonMatch) {
-        return this.fallbackParse(response);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[1]);
+        return this.validateAndNormalize(parsed, response);
       }
       
-      const parsed = JSON.parse(jsonMatch[1]);
-      return {
-        action: this.normalizeAction(parsed.action),
-        amount: parsed.amount,
-        reasoning: parsed.reasoning || '',
-        confidence: parsed.confidence || 50,
-        read: parsed.read || '',
-        rawResponse: response,
-        parseSuccess: true
-      };
-    } catch (error) {
+      // 2. 尝试直接解析JSON
+      const directMatch = response.match(/\{[\s\S]*"action"[\s\S]*\}/);
+      if (directMatch) {
+        const parsed = JSON.parse(directMatch[0]);
+        return this.validateAndNormalize(parsed, response);
+      }
+      
+      // 3. 容错：从自然语言提取
+      return this.fallbackParse(response);
+    } catch {
       return this.fallbackParse(response);
     }
   }
   
-  // 容错解析：从自然语言中提取动作
-  private fallbackParse(response: string): AIDecision {
-    const actionPatterns = {
-      fold: /弃牌|fold/i,
-      call: /跟注|call/i,
-      raise: /加注|raise|(\d+)/i,
-      check: /过牌|check/i,
-      'all-in': /全押|all.?in/i
-    };
+  private validateAndNormalize(parsed: any, raw: string): AIDecision {
+    const action = this.normalizeAction(parsed.action);
+    const target = this.extractTarget(parsed.speech || '');
     
-    for (const [action, pattern] of Object.entries(actionPatterns)) {
-      if (pattern.test(response)) {
-        return {
-          action: action as ActionType,
-          reasoning: 'Parsed from natural language',
-          confidence: 30,
-          read: '',
-          rawResponse: response,
-          parseSuccess: false
-        };
-      }
-    }
-    
-    // 默认安全动作
     return {
-      action: 'check',
-      reasoning: 'Parse failed, defaulting to check',
-      confidence: 0,
-      read: '',
+      action,
+      speech: (parsed.speech || '').slice(0, 50),  // 限制长度
+      emotion: parsed.emotion || 'neutral',
+      target,
+      rawResponse: raw,
+      parseSuccess: true
+    };
+  }
+  
+  private normalizeAction(action: string): 'allin' | 'fold' {
+    const lower = action?.toLowerCase() || '';
+    if (lower.includes('all') || lower.includes('in') || lower.includes('全押')) {
+      return 'allin';
+    }
+    return 'fold';  // 默认安全动作
+  }
+  
+  private extractTarget(speech: string): string | null {
+    const match = speech.match(/@(\S+)/);
+    return match ? match[1] : null;
+  }
+  
+  private fallbackParse(response: string): AIDecision {
+    // 简单关键词判断
+    const isAllin = /all.?in|全押|梭哈|来啊|干/i.test(response);
+    
+    return {
+      action: isAllin ? 'allin' : 'fold',
+      speech: '...',
+      emotion: 'neutral',
+      target: null,
       rawResponse: response,
       parseSuccess: false
     };
@@ -224,15 +300,36 @@ class ResponseParser {
 
 ---
 
-## 4. LLM 调用层
+## 4. LLM 调用层（流式输出）
 
-### 4.1 统一接口定义
+### 4.1 流式输出架构
+
+```
+LLM API (Streaming)
+    │
+    ▼
+┌─────────────────┐
+│ SSE Transformer │  <- 每个token即时转发
+└────────┬────────┘
+         │
+    Socket.io
+         │
+         ▼
+┌─────────────────┐
+│   Frontend UI   │  <- 打字机效果展示
+└─────────────────┘
+```
+
+### 4.2 统一流式接口
 
 ```typescript
 interface LLMProvider {
   name: string;
-  chat(messages: ChatMessage[], options?: LLMOptions): Promise<string>;
-  getTokenCount(text: string): number;
+  streamChat(
+    messages: ChatMessage[], 
+    onChunk: (text: string) => void,
+    options?: LLMOptions
+  ): Promise<string>;  // 返回完整响应
 }
 
 interface ChatMessage {
@@ -247,15 +344,78 @@ interface LLMOptions {
 }
 ```
 
-### 4.2 Kimi API 实现
+### 4.3 智谱 GLM-4-Flash 流式实现 [主力]
 
 ```typescript
-class KimiProvider implements LLMProvider {
-  name = 'Kimi';
+class ZhipuStreamProvider implements LLMProvider {
+  name = 'Zhipu-Stream';
+  private apiKey: string;
+  private baseUrl = 'https://open.bigmodel.cn/api/paas/v4';
+  
+  async streamChat(
+    messages: ChatMessage[],
+    onChunk: (text: string) => void,
+    options?: LLMOptions
+  ): Promise<string> {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'glm-4-flash',  // 免费模型！
+        messages,
+        stream: true,  // 🔑 关键：开启流式
+        temperature: options?.temperature ?? 0.8,
+        max_tokens: options?.maxTokens ?? 200
+      })
+    });
+    
+    let fullText = '';
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+      
+      for (const line of lines) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        
+        try {
+          const parsed = JSON.parse(data);
+          const content = parsed.choices?.[0]?.delta?.content || '';
+          if (content) {
+            fullText += content;
+            onChunk(content);  // 🔑 即时回调
+          }
+        } catch {}
+      }
+    }
+    
+    return fullText;
+  }
+}
+```
+
+### 4.4 Kimi 流式实现 [备用]
+
+```typescript
+class KimiStreamProvider implements LLMProvider {
+  name = 'Kimi-Stream';
   private apiKey: string;
   private baseUrl = 'https://api.moonshot.cn/v1';
   
-  async chat(messages: ChatMessage[], options?: LLMOptions): Promise<string> {
+  async streamChat(
+    messages: ChatMessage[],
+    onChunk: (text: string) => void,
+    options?: LLMOptions
+  ): Promise<string> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -265,302 +425,562 @@ class KimiProvider implements LLMProvider {
       body: JSON.stringify({
         model: 'moonshot-v1-8k',
         messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens ?? 500
+        stream: true,
+        temperature: options?.temperature ?? 0.8,
+        max_tokens: options?.maxTokens ?? 200
       })
     });
     
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-}
-```
-
-### 4.3 智谱 GLM-4 实现
-
-```typescript
-class ZhipuProvider implements LLMProvider {
-  name = 'Zhipu';
-  private apiKey: string;
-  private baseUrl = 'https://open.bigmodel.cn/api/paas/v4';
-  
-  async chat(messages: ChatMessage[], options?: LLMOptions): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'glm-4-flash',  // 免费模型
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens ?? 500
-      })
-    });
+    // 同样的SSE解析逻辑
+    let fullText = '';
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
     
-    const data = await response.json();
-    return data.choices[0].message.content;
-  }
-}
-```
-
-### 4.4 Provider 管理与降级
-
-```typescript
-class LLMService {
-  private providers: LLMProvider[];
-  private currentIndex = 0;
-  
-  constructor(providers: LLMProvider[]) {
-    this.providers = providers;
-  }
-  
-  async getDecision(
-    context: GameContext, 
-    personality: AIPersonality
-  ): Promise<AIDecision> {
-    const messages: ChatMessage[] = [
-      { role: 'system', content: personality.systemPrompt },
-      { role: 'user', content: buildDecisionPrompt(context, personality) }
-    ];
-    
-    // 尝试主 Provider
-    for (let i = 0; i < this.providers.length; i++) {
-      const provider = this.providers[(this.currentIndex + i) % this.providers.length];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
       
-      try {
-        const response = await provider.chat(messages, {
-          temperature: this.getTemperature(personality),
-          timeout: 10000
-        });
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+      
+      for (const line of lines) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
         
-        return new ResponseParser().parse(response);
-      } catch (error) {
-        console.warn(`Provider ${provider.name} failed, trying next...`);
+        try {
+          const parsed = JSON.parse(data);
+          const content = parsed.choices?.[0]?.delta?.content || '';
+          if (content) {
+            fullText += content;
+            onChunk(content);
+          }
+        } catch {}
       }
     }
     
-    // 所有 Provider 失败，返回保守默认动作
-    return this.getDefaultDecision(context);
-  }
-  
-  private getTemperature(personality: AIPersonality): number {
-    // 不可预测型用更高温度
-    return personality.style === 'unpredictable' ? 0.9 : 0.7;
+    return fullText;
   }
 }
+```
 ```
 
 ---
 
-## 5. AI Agent 管理器
+## 5. AI Agent 系统（含情绪状态机）
 
-### 5.1 Agent 生命周期
+### 5.1 情绪状态机 🆕
+
+> **核心理念**：AI的情绪会随比赛进展变化，影响决策和对话
+
+```typescript
+type EmotionState = 
+  | 'confident'   // 连赢 → 嚣张
+  | 'tilting'     // 被诈唬成功 → 上头
+  | 'cautious'    // 输了大pot → 谨慎
+  | 'mocking'     // 赢了宿敌 → 嘲讽模式
+  | 'neutral';    // 默认状态
+
+interface EmotionTrigger {
+  condition: string;
+  from: EmotionState[];
+  to: EmotionState;
+  duration: number;  // 持续几轮
+}
+
+const EMOTION_RULES: EmotionTrigger[] = [
+  {
+    condition: 'won_against_rival',      // 赢了宿敌
+    from: ['*'],
+    to: 'mocking',
+    duration: 2
+  },
+  {
+    condition: 'lost_to_bluff',           // 被诈唬成功
+    from: ['neutral', 'confident'],
+    to: 'tilting',
+    duration: 3
+  },
+  {
+    condition: 'won_big_pot',             // 赢大底池
+    from: ['*'],
+    to: 'confident',
+    duration: 2
+  },
+  {
+    condition: 'lost_half_stack',         // 输掉一半筹码
+    from: ['*'],
+    to: 'cautious',
+    duration: 2
+  }
+];
+
+class EmotionStateMachine {
+  private state: EmotionState = 'neutral';
+  private countdown: number = 0;
+  
+  transition(event: string): void {
+    for (const rule of EMOTION_RULES) {
+      if (rule.condition === event) {
+        if (rule.from.includes('*') || rule.from.includes(this.state)) {
+          this.state = rule.to;
+          this.countdown = rule.duration;
+          return;
+        }
+      }
+    }
+  }
+  
+  tick(): void {
+    if (this.countdown > 0) {
+      this.countdown--;
+      if (this.countdown === 0) {
+        this.state = 'neutral';
+      }
+    }
+  }
+  
+  getPromptModifier(): string {
+    switch (this.state) {
+      case 'confident':
+        return '你现在非常自信，可以更嚣张一点，嘲讽对手。';
+      case 'tilting':
+        return '你现在很上头，可能做出不理性决策，语气更冲。';
+      case 'cautious':
+        return '你现在比较谨慎，除非牌很好否则倾向弃牌。';
+      case 'mocking':
+        return '你刚赢了宿敌，狠狠嘲讽他！';
+      default:
+        return '';
+    }
+  }
+}
+```
+
+### 5.2 @提及冲突系统 🆕
+
+```typescript
+interface MentionEvent {
+  from: string;      // 发言者
+  target: string;    // @的对象
+  speech: string;    // 发言内容
+  emotion: EmotionType;
+}
+
+class MentionProcessor {
+  /**
+   * 解析AI发言中的@提及
+   */
+  parseMentions(speech: string, allPlayers: string[]): string | null {
+    const match = speech.match(/@(\S+)/);
+    if (!match) return null;
+    
+    const targetName = match[1];
+    // 模糊匹配玩家名
+    const target = allPlayers.find(p => 
+      p.includes(targetName) || targetName.includes(p)
+    );
+    
+    return target || null;
+  }
+  
+  /**
+   * 处理@提及事件，触发目标AI的情绪变化
+   */
+  handleMention(event: MentionEvent, targetAgent: AIAgent): void {
+    // 被嘲讽 → 可能上头
+    if (event.emotion === 'mocking' || event.emotion === 'angry') {
+      targetAgent.emotionMachine.transition('was_taunted');
+    }
+    
+    // 添加到目标AI的上下文中
+    targetAgent.addRecentTaunt({
+      from: event.from,
+      content: event.speech
+    });
+  }
+}
+```
+
+### 5.3 Agent 类实现
 
 ```typescript
 class AIAgent {
   readonly id: string;
+  readonly name: string;
   readonly personality: AIPersonality;
-  private conversationHistory: ChatMessage[] = [];
+  readonly emotionMachine: EmotionStateMachine;
+  
   private llmService: LLMService;
+  private recentTaunts: { from: string; content: string }[] = [];
   
-  // 记忆系统：记住本局关键信息
-  private memory: AgentMemory = {
-    opponentTendencies: {},  // 对手行为倾向
-    significantHands: [],     // 重要手牌记录
-    currentMood: 'neutral'    // 当前情绪状态
-  };
+  constructor(personality: AIPersonality, llmService: LLMService) {
+    this.id = uuidv4();
+    this.name = personality.name;
+    this.personality = personality;
+    this.emotionMachine = new EmotionStateMachine();
+    this.llmService = llmService;
+  }
   
-  async makeDecision(gameState: GameState): Promise<AIDecision> {
-    const context = this.buildContext(gameState);
+  /**
+   * 核心决策方法（带流式输出）
+   */
+  async makeDecision(
+    gameContext: SimpleGameContext,
+    onSpeechChunk: (chunk: string) => void
+  ): Promise<AIDecision> {
+    // 1. 构建增强Prompt（含情绪修饰）
+    const emotionModifier = this.emotionMachine.getPromptModifier();
+    const tauntContext = this.buildTauntContext();
     
-    // 添加记忆上下文
-    const enrichedPersonality = this.enrichWithMemory(this.personality);
+    const messages: ChatMessage[] = [
+      { 
+        role: 'system', 
+        content: this.personality.systemPrompt + '\n\n' + emotionModifier 
+      },
+      { 
+        role: 'user', 
+        content: buildSimplePrompt(gameContext) + '\n\n' + tauntContext 
+      }
+    ];
     
-    const decision = await this.llmService.getDecision(context, enrichedPersonality);
+    // 2. 流式调用LLM
+    let speechBuffer = '';
+    let fullResponse = '';
     
-    // 更新记忆
-    this.updateMemory(gameState, decision);
+    fullResponse = await this.llmService.streamChat(
+      messages,
+      (chunk) => {
+        fullResponse += chunk;
+        
+        // 尝试实时提取speech字段
+        const speechMatch = fullResponse.match(/"speech"\s*:\s*"([^"]*)$/);
+        if (speechMatch) {
+          const newContent = speechMatch[1].slice(speechBuffer.length);
+          if (newContent) {
+            speechBuffer += newContent;
+            onSpeechChunk(newContent);  // 🔑 实时推送
+          }
+        }
+      }
+    );
+    
+    // 3. 解析完整响应
+    const decision = new ResponseParser().parse(fullResponse);
+    
+    // 4. 更新情绪状态
+    this.emotionMachine.tick();
     
     return decision;
   }
   
-  private updateMemory(state: GameState, decision: AIDecision): void {
-    // 更新对手倾向判断
-    // 记录关键决策
-    // 根据结果调整情绪状态
+  addRecentTaunt(taunt: { from: string; content: string }): void {
+    this.recentTaunts.push(taunt);
+    if (this.recentTaunts.length > 3) {
+      this.recentTaunts.shift();
+    }
+  }
+  
+  private buildTauntContext(): string {
+    if (this.recentTaunts.length === 0) return '';
+    
+    return `
+## ⚠️ 有人在挑衅你！
+
+${this.recentTaunts.map(t => `${t.from}: "${t.content}"`).join('\n')}
+
+你可以选择回击或者无视。记住你的性格！
+`;
   }
 }
-
-interface AgentMemory {
-  opponentTendencies: Record<string, {
-    aggression: number;
-    bluffLikelihood: number;
-  }>;
-  significantHands: {
-    hand: string;
-    outcome: 'won' | 'lost';
-    chipDelta: number;
-  }[];
-  currentMood: 'tilt' | 'confident' | 'cautious' | 'neutral';
-}
-```
-
-### 5.2 Agent Pool 管理
+### 5.4 Socket.io 实时推送
 
 ```typescript
-class AIAgentPool {
-  private agents: Map<string, AIAgent> = new Map();
-  private availablePersonalities: AIPersonality[];
+// server/socket-handlers.ts
+import { Server } from 'socket.io';
+
+export function setupAISocketHandlers(io: Server) {
+  io.on('connection', (socket) => {
+    socket.on('join_game', (gameId: string) => {
+      socket.join(`game:${gameId}`);
+    });
+  });
+}
+
+// 在AI决策时使用
+async function handleAITurn(
+  agent: AIAgent, 
+  gameContext: SimpleGameContext,
+  io: Server,
+  gameId: string
+): Promise<AIDecision> {
+  // 通知前端：AI开始思考
+  io.to(`game:${gameId}`).emit('ai_thinking', {
+    agentId: agent.id,
+    agentName: agent.name,
+    avatar: agent.personality.avatar
+  });
   
-  // 创建新 Agent
-  createAgent(style?: PlayStyle): AIAgent {
-    const personality = style 
-      ? this.getPersonalityByStyle(style)
-      : this.getRandomPersonality();
-    
-    const agent = new AIAgent(uuidv4(), personality, this.llmService);
-    this.agents.set(agent.id, agent);
-    return agent;
-  }
-  
-  // 批量创建（用于一局游戏）
-  createAgentsForGame(count: number): AIAgent[] {
-    const styles: PlayStyle[] = ['aggressive', 'conservative', 'bluffer', 'analytical'];
-    const selectedStyles = this.selectDiverseStyles(count, styles);
-    
-    return selectedStyles.map(style => this.createAgent(style));
-  }
-  
-  // 确保风格多样性
-  private selectDiverseStyles(count: number, styles: PlayStyle[]): PlayStyle[] {
-    if (count >= styles.length) {
-      return [...styles, ...this.selectDiverseStyles(count - styles.length, styles)];
+  // 流式输出AI对话
+  const decision = await agent.makeDecision(
+    gameContext,
+    (chunk) => {
+      io.to(`game:${gameId}`).emit('ai_speech_chunk', {
+        agentId: agent.id,
+        chunk
+      });
     }
-    return this.shuffleArray(styles).slice(0, count);
+  );
+  
+  // 发送完整决策
+  io.to(`game:${gameId}`).emit('ai_decision', {
+    agentId: agent.id,
+    agentName: agent.name,
+    action: decision.action,
+    speech: decision.speech,
+    emotion: decision.emotion,
+    target: decision.target
+  });
+  
+  // 处理@提及
+  if (decision.target) {
+    io.to(`game:${gameId}`).emit('ai_mention', {
+      from: agent.name,
+      target: decision.target,
+      speech: decision.speech
+    });
   }
+  
+  return decision;
 }
 ```
 
 ---
 
-## 6. 决策记录与可追溯性
+## 6. 决策记录（用于链上验证）
 
 ### 6.1 决策日志结构
 
 ```typescript
 interface DecisionLog {
-  gameId: string;
-  agentId: string;
-  roundNumber: number;
   timestamp: number;
+  agentId: string;
+  agentName: string;
   
   // 输入
-  gameState: GameState;
-  prompt: string;
+  holeCards: string;
+  communityCards: string;
+  potSize: number;
   
   // 输出
+  action: 'allin' | 'fold';
+  speech: string;
+  emotion: string;
+  target: string | null;
+  
+  // 原始响应（调试用）
   rawResponse: string;
-  parsedDecision: AIDecision;
-  
-  // 元数据
-  llmProvider: string;
-  latencyMs: number;
-  tokenCount: {
-    input: number;
-    output: number;
-  };
-  
-  // 哈希（用于链上验证）
-  hash: string;
 }
 
-class DecisionLogger {
-  private logs: DecisionLog[] = [];
+interface GameLog {
+  gameId: string;
+  startTime: number;
+  endTime: number;
+  players: { id: string; name: string; avatar: string }[];
+  decisions: DecisionLog[];
+  communityCards: string[];
+  winner: { id: string; name: string };
+  pot: number;
+}
+```
+
+### 6.2 日志收集器
+
+```typescript
+class GameLogger {
+  private currentGame: GameLog | null = null;
   
-  log(decision: DecisionLog): void {
-    decision.hash = this.computeHash(decision);
-    this.logs.push(decision);
-    
-    // 持久化到数据库
-    this.persistToDatabase(decision);
+  startGame(gameId: string, players: AIAgent[]): void {
+    this.currentGame = {
+      gameId,
+      startTime: Date.now(),
+      endTime: 0,
+      players: players.map(p => ({
+        id: p.id,
+        name: p.name,
+        avatar: p.personality.avatar
+      })),
+      decisions: [],
+      communityCards: [],
+      winner: { id: '', name: '' },
+      pot: 0
+    };
   }
   
-  private computeHash(log: DecisionLog): string {
-    const payload = JSON.stringify({
-      gameState: log.gameState,
-      decision: log.parsedDecision,
-      timestamp: log.timestamp
+  logDecision(
+    agent: AIAgent,
+    context: SimpleGameContext,
+    decision: AIDecision
+  ): void {
+    if (!this.currentGame) return;
+    
+    this.currentGame.decisions.push({
+      timestamp: Date.now(),
+      agentId: agent.id,
+      agentName: agent.name,
+      holeCards: context.holeCards,
+      communityCards: context.communityCards,
+      potSize: context.potSize,
+      action: decision.action,
+      speech: decision.speech,
+      emotion: decision.emotion,
+      target: decision.target,
+      rawResponse: decision.rawResponse
     });
-    return sha256(payload);
+  }
+  
+  endGame(winner: AIAgent, pot: number): GameLog {
+    if (!this.currentGame) throw new Error('No active game');
+    
+    this.currentGame.endTime = Date.now();
+    this.currentGame.winner = { id: winner.id, name: winner.name };
+    this.currentGame.pot = pot;
+    
+    const gameLog = this.currentGame;
+    this.currentGame = null;
+    return gameLog;
+  }
+  
+  /**
+   * 导出JSON字符串（用于计算哈希）
+   */
+  exportForHashing(gameLog: GameLog): string {
+    // 移除rawResponse以减小体积
+    const cleanLog = {
+      ...gameLog,
+      decisions: gameLog.decisions.map(d => ({
+        timestamp: d.timestamp,
+        agentId: d.agentId,
+        action: d.action,
+        speech: d.speech,
+        emotion: d.emotion,
+        target: d.target
+      }))
+    };
+    
+    return JSON.stringify(cleanLog, Object.keys(cleanLog).sort());
   }
 }
 ```
 
 ---
 
-## 7. 性能优化
+## 7. 前端对话气泡组件
 
-### 7.1 请求池控制
+### 7.1 打字机效果组件
 
-```typescript
-class RequestThrottler {
-  private queue: (() => Promise<any>)[] = [];
-  private processing = 0;
-  private maxConcurrent = 2;  // 避免 API 限流
+```tsx
+// components/AI/SpeechBubble.tsx
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface SpeechBubbleProps {
+  agentName: string;
+  avatar: string;
+  emotion: string;
+  targetName?: string;
+  isTyping: boolean;
+  text: string;
+}
+
+export function SpeechBubble({ 
+  agentName, 
+  avatar, 
+  emotion, 
+  targetName,
+  isTyping, 
+  text 
+}: SpeechBubbleProps) {
+  const emotionColor = {
+    confident: 'border-yellow-500',
+    angry: 'border-red-500',
+    mocking: 'border-purple-500',
+    nervous: 'border-gray-400',
+    neutral: 'border-blue-500'
+  }[emotion] || 'border-blue-500';
   
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.queue.push(async () => {
-        try {
-          const result = await fn();
-          resolve(result);
-        } catch (e) {
-          reject(e);
-        }
-      });
-      this.processQueue();
-    });
-  }
-  
-  private async processQueue(): Promise<void> {
-    while (this.queue.length > 0 && this.processing < this.maxConcurrent) {
-      this.processing++;
-      const task = this.queue.shift()!;
-      await task();
-      this.processing--;
-      this.processQueue();
-    }
-  }
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      className={`flex gap-3 p-4 bg-gray-800/90 rounded-xl border-l-4 ${emotionColor}`}
+    >
+      {/* 头像 */}
+      <div className="text-4xl">{avatar}</div>
+      
+      {/* 内容 */}
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="font-bold text-white">{agentName}</span>
+          {targetName && (
+            <span className="text-sm text-blue-400">→ @{targetName}</span>
+          )}
+        </div>
+        
+        {/* 打字机效果文本 */}
+        <p className="text-gray-200">
+          {text}
+          {isTyping && (
+            <span className="inline-block w-2 h-4 bg-white ml-1 animate-pulse" />
+          )}
+        </p>
+      </div>
+    </motion.div>
+  );
 }
 ```
 
-### 7.2 响应缓存（相似局面）
+### 7.2 对话流组件
 
-```typescript
-class DecisionCache {
-  private cache = new LRUCache<string, AIDecision>({ max: 1000 });
+```tsx
+// components/AI/DialogueStream.tsx
+import { useGameStore } from '@/stores/game';
+import { SpeechBubble } from './SpeechBubble';
+
+export function DialogueStream() {
+  const messages = useGameStore(s => s.dialogue);
+  const typingAgent = useGameStore(s => s.typingAgent);
+  const typingText = useGameStore(s => s.typingText);
   
-  getCacheKey(context: GameContext, personality: AIPersonality): string {
-    // 简化状态以提高缓存命中
-    return hash({
-      holeCards: context.holeCards,
-      communityCards: context.communityCards,
-      potOdds: Math.round(context.potSize / context.currentBet),
-      style: personality.style
-    });
-  }
-  
-  // 相似局面可复用决策（加一定随机性）
-  getCachedDecision(key: string): AIDecision | null {
-    const cached = this.cache.get(key);
-    if (cached && Math.random() > 0.3) {  // 70% 复用
-      return cached;
-    }
-    return null;
-  }
+  return (
+    <div className="space-y-3 max-h-[400px] overflow-y-auto">
+      {/* 历史消息 */}
+      {messages.map((msg, i) => (
+        <SpeechBubble
+          key={i}
+          agentName={msg.agentName}
+          avatar={msg.avatar}
+          emotion={msg.emotion}
+          targetName={msg.target}
+          isTyping={false}
+          text={msg.speech}
+        />
+      ))}
+      
+      {/* 正在输入的消息 */}
+      {typingAgent && (
+        <SpeechBubble
+          agentName={typingAgent.name}
+          avatar={typingAgent.avatar}
+          emotion="neutral"
+          isTyping={true}
+          text={typingText}
+        />
+      )}
+    </div>
+  );
 }
+```
 ```
 
 ---
@@ -572,31 +992,37 @@ src/
 ├── agents/
 │   ├── index.ts                  # Agent 模块入口
 │   ├── ai-agent.ts               # AI Agent 类
-│   ├── agent-pool.ts             # Agent 池管理
+│   ├── emotion-machine.ts        # 情绪状态机 🆕
+│   ├── mention-processor.ts      # @提及处理器 🆕
 │   ├── personalities/
 │   │   ├── index.ts              # 角色导出
-│   │   ├── aggressive.ts         # 激进型
-│   │   ├── conservative.ts       # 保守型
-│   │   ├── bluffer.ts            # 诈唬型
-│   │   └── analytical.ts         # 分析型
+│   │   ├── fire.ts               # 火焰 - 激进型
+│   │   ├── ice.ts                # 冰山 - 保守型
+│   │   ├── shadow.ts             # 诡影 - 诈唬型
+│   │   └── logic.ts              # 逻辑 - 分析型
 │   ├── prompts/
-│   │   ├── decision-prompt.ts    # 决策 Prompt 模板
+│   │   ├── simple-prompt.ts      # All-in/Fold Prompt
 │   │   └── context-builder.ts    # 状态转换
 │   ├── llm/
 │   │   ├── providers/
-│   │   │   ├── kimi.ts           # Kimi 实现
-│   │   │   ├── zhipu.ts          # 智谱实现
-│   │   │   └── openai.ts         # OpenAI 实现
+│   │   │   ├── zhipu-stream.ts   # 智谱流式 [主力]
+│   │   │   ├── kimi-stream.ts    # Kimi流式
+│   │   │   └── openai-stream.ts  # OpenAI流式
 │   │   ├── llm-service.ts        # 统一调用服务
 │   │   └── response-parser.ts    # 响应解析器
-│   ├── memory/
-│   │   └── agent-memory.ts       # Agent 记忆系统
-│   └── logging/
-│       └── decision-logger.ts    # 决策日志
+│   ├── logging/
+│   │   └── game-logger.ts        # 游戏日志收集
+│   └── socket/
+│       └── ai-socket-handlers.ts # Socket.io 推送
+├── components/
+│   └── AI/
+│       ├── SpeechBubble.tsx      # 对话气泡 🆕
+│       └── DialogueStream.tsx    # 对话流 🆕
 └── tests/
     └── agents/
         ├── response-parser.test.ts
-        └── agent-decision.test.ts
+        ├── emotion-machine.test.ts
+        └── mention-processor.test.ts
 ```
 
 ---
@@ -605,30 +1031,40 @@ src/
 
 | 任务 | 预计时间 | 优先级 |
 |------|----------|--------|
-| 角色人设设计 | 2h | P0 |
-| Prompt 模板开发 | 3h | P0 |
-| LLM Provider 实现 | 3h | P0 |
-| 响应解析器 | 2h | P0 |
-| Agent 类实现 | 3h | P0 |
-| 决策日志系统 | 2h | P1 |
-| 记忆系统 | 3h | P2 |
-| 缓存优化 | 2h | P2 |
+| 4角色人设Prompt | 2h | P0 |
+| 流式LLM调用 | 2h | P0 |
+| 响应解析器 | 1h | P0 |
+| 情绪状态机 | 1h | P0 |
+| @提及冲突系统 | 1h | P0 |
+| Socket.io推送 | 1h | P0 |
+| 前端对话组件 | 2h | P1 |
 
-**总计**: 约 20 小时（2.5个工作日）
+**总计**: 10h（1.5个工作日）
 
 ---
 
 ## 10. API 费用估算
 
-| Provider | 模型 | 输入费用 | 输出费用 | 单次决策成本 |
-|----------|------|----------|----------|--------------|
-| 智谱 | GLM-4-Flash | 免费 | 免费 | ¥0 |
-| Kimi | moonshot-v1-8k | ¥0.012/1K | ¥0.012/1K | ~¥0.02 |
-| OpenAI | GPT-4o-mini | $0.15/1M | $0.60/1M | ~$0.001 |
+| Provider | 模型 | 免费额度 | 单次决策 | 一局游戏(4人×5轮) |
+|----------|------|----------|----------|-------------------|
+| 智谱 | GLM-4-Flash | **无限免费** | ¥0 | ¥0 |
+| Kimi | moonshot-v1-8k | 15元/新用户 | ~¥0.02 | ~¥0.4 |
+| OpenAI | GPT-4o-mini | 无 | ~$0.001 | ~$0.02 |
 
-**一局游戏（4人 × 20轮决策）**：
-- 智谱方案：¥0
-- Kimi方案：约 ¥1.6
-- OpenAI方案：约 $0.08
+**建议**：100% 使用智谱 GLM-4-Flash，完全免费！
 
-建议：优先使用智谱免费额度进行开发和演示。
+---
+
+## 11. 演示话术
+
+> "让我展示一下AI之间的性格碰撞！
+>
+> 这里有4个AI玩家，每个都有独特的性格——火焰很冲动，冰山很冷静，他们天生就互相看不惯。
+>
+> 注意看——火焰刚赢了冰山，他马上就开始嘲讽：'@冰山 怎么又缩了？'
+>
+> 而冰山的情绪状态变成了'cautious'，他下一轮会更保守...
+>
+> **[对话框实时打字机效果展示]**
+>
+> 你看，每条消息都是流式输出的，就像真人在打字一样。这不是预录的，这是AI实时生成的！"

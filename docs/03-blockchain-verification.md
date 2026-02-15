@@ -1,394 +1,249 @@
-# 模块三：链上可验证层
+# 模块三：链上可验证层（最终版）
 
-## 1. 模块概述
+> **状态**: 补强后 | **优先级**: P0 | **预计时间**: 6h
 
-链上可验证层为 AI 决策提供透明性和可审计性，确保所有决策过程可追溯、防篡改。
+## 1. 设计目标
 
-### 1.1 核心职责
-- 决策数据哈希计算与上链
-- 智能合约存储与验证
-- 提供审计查询接口
-- 可选的零知识证明增强
+### 🎯 核心目标：演示时能"秀"出可验证性
 
-### 1.2 技术选型
+评委不会在现场跑复杂的Merkle Proof脚本，但他们会被以下场景打动：
+
+1. 点击按钮 → 从IPFS下载原始数据
+2. 页面显示 → 本地计算的Hash
+3. 对比显示 → 链上存储的Hash
+4. ✅ 匹配成功 → "数据未被篡改"
+
+### 技术选型
+
 | 组件 | 选择 | 理由 |
 |------|------|------|
-| 主链 | Monad Testnet | 高吞吐、低延迟、EVM兼容 |
-| 备选 | Polygon Mumbai | 成熟稳定、免费测试 |
-| 合约语言 | Solidity | 生态成熟、工具丰富 |
-| 链下存储 | IPFS / Arweave | 完整决策数据永久存储 |
-
-### 1.3 设计原则
-- **最小化上链**：只上链哈希，完整数据链下存储
-- **批量提交**：一局游戏结束后批量上链，降低成本
-- **渐进式验证**：先跑通链下，再逐步上链
+| 链 | Monad Testnet | 赛道相关 |
+| 存储 | web3.storage (IPFS) | 免费、简单 |
+| 合约 | 极简版 (~40行) | 够用就好 |
 
 ---
 
-## 2. 数据结构设计
+## 2. 可验证性架构
 
-### 2.1 决策哈希结构
-
-```typescript
-interface DecisionCommitment {
-  gameId: bytes32;           // 游戏唯一标识
-  roundNumber: uint8;        // 回合数
-  agentId: bytes32;          // AI 玩家标识
-  decisionHash: bytes32;     // 决策内容哈希
-  timestamp: uint64;         // Unix 时间戳
-  previousHash: bytes32;     // 前一决策哈希（形成链）
-}
-
-// 哈希计算
-// decisionHash = keccak256(abi.encodePacked(
-//   gameState,
-//   action,
-//   amount,
-//   reasoning,
-//   timestamp
-// ))
 ```
-
-### 2.2 游戏结果结构
-
-```typescript
-interface GameResult {
-  gameId: bytes32;
-  startTime: uint64;
-  endTime: uint64;
-  players: bytes32[];        // 参与的 AI ID 列表
-  winner: bytes32;           // 获胜者 ID
-  finalChips: uint256[];     // 最终筹码分布
-  decisionRootHash: bytes32; // 所有决策的 Merkle Root
-  metadataURI: string;       // IPFS/Arweave 链接
-}
+游戏结束
+    │
+    ▼
+┌────────────────────────────────────┐
+│  生成 GameLog JSON                 │
+│  {                                 │
+│    gameId: "game_001",             │
+│    players: [...],                 │
+│    decisions: [                    │
+│      { ai: "火焰", action: "allin",│
+│        speech: "@冰山你又缩了？",   │
+│        timestamp: 1234567890 },    │
+│      ...                           │
+│    ],                              │
+│    winner: "火焰",                 │
+│    pot: 800                        │
+│  }                                 │
+└─────────────┬──────────────────────┘
+              │
+    ┌─────────┴─────────┐
+    ▼                   ▼
+┌──────────┐    ┌──────────────────────┐
+│ 计算Hash │    │  上传 IPFS           │
+│ keccak256│    │  获得 CID:           │
+│ (JSON)   │    │  bafybei...          │
+└────┬─────┘    └──────────┬───────────┘
+     │                     │
+     └──────────┬──────────┘
+                │
+                ▼
+┌────────────────────────────────────┐
+│  调用合约                          │
+│  commitGame(gameId, hash, cid)     │
+└─────────────┬──────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────┐
+│  前端展示                          │
+│  🔗 "Game committed on Monad!"     │
+│  📜 View Transaction →             │
+│  📦 View on IPFS →                 │
+│  ✅ Verify Hash →  [新增按钮]       │
+└────────────────────────────────────┘
 ```
 
 ---
 
-## 3. 智能合约设计
+## 3. 智能合约（补强版）
 
-### 3.1 合约架构
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  PokerVerifier.sol                  │
-│  - 验证决策哈希                                      │
-│  - 存储游戏结果                                      │
-│  - 提供审计接口                                      │
-└─────────────────────────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-│ GameRegistry.sol│ │AccessControl│ │ EventLogger.sol │
-│ 游戏注册与管理   │ │   权限控制   │ │   事件记录      │
-└─────────────────┘ └─────────────┘ └─────────────────┘
-```
-
-### 3.2 主合约实现
+### 关键改进：增加 `verifyHash()` 函数
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-
-contract PokerVerifier is Ownable {
+/// @title GameVerifier - PokerMind Arena 游戏验证合约
+/// @notice 存储游戏决策哈希，支持链上验证
+contract GameVerifier {
     
-    // ============ 状态变量 ============
+    // ============ 数据结构 ============
     
-    struct GameRecord {
-        bytes32 gameId;
-        uint64 startTime;
-        uint64 endTime;
-        bytes32[] players;
-        bytes32 winner;
-        bytes32 decisionRootHash;
-        string metadataURI;
-        bool finalized;
+    struct GameCommitment {
+        bytes32 decisionHash;    // keccak256(所有决策JSON)
+        string ipfsCid;          // IPFS CID
+        uint256 timestamp;       // 提交时间
+        address submitter;       // 提交者
     }
     
-    // 游戏记录映射
-    mapping(bytes32 => GameRecord) public games;
+    // gameId => commitment
+    mapping(bytes32 => GameCommitment) public games;
     
-    // 单个决策哈希存储（可选，用于细粒度验证）
-    mapping(bytes32 => mapping(uint256 => bytes32)) public decisionHashes;
-    // gameId => roundNumber => decisionHash
-    
-    // 已验证的游戏列表
-    bytes32[] public verifiedGames;
-    
-    // 授权的提交者地址
-    mapping(address => bool) public authorizedSubmitters;
+    // 已记录的游戏列表
+    bytes32[] public gameIds;
     
     // ============ 事件 ============
     
-    event GameStarted(bytes32 indexed gameId, bytes32[] players, uint64 timestamp);
-    event DecisionRecorded(bytes32 indexed gameId, uint256 roundNumber, bytes32 decisionHash);
-    event GameFinalized(bytes32 indexed gameId, bytes32 winner, bytes32 merkleRoot);
-    event VerificationResult(bytes32 indexed gameId, uint256 roundNumber, bool valid);
+    event GameCommitted(
+        bytes32 indexed gameId,
+        bytes32 decisionHash,
+        string ipfsCid,
+        uint256 timestamp
+    );
     
-    // ============ 修饰器 ============
-    
-    modifier onlyAuthorized() {
-        require(authorizedSubmitters[msg.sender] || msg.sender == owner(), "Not authorized");
-        _;
-    }
-    
-    modifier gameExists(bytes32 gameId) {
-        require(games[gameId].startTime > 0, "Game not found");
-        _;
-    }
-    
-    // ============ 管理函数 ============
-    
-    function setAuthorizedSubmitter(address submitter, bool authorized) external onlyOwner {
-        authorizedSubmitters[submitter] = authorized;
-    }
+    event VerificationPerformed(
+        bytes32 indexed gameId,
+        bytes32 providedHash,
+        bool matched
+    );
     
     // ============ 核心函数 ============
     
-    /**
-     * @notice 开始一局新游戏
-     * @param gameId 游戏唯一标识
-     * @param players 参与的 AI 玩家 ID
-     */
-    function startGame(
-        bytes32 gameId, 
-        bytes32[] calldata players
-    ) external onlyAuthorized {
-        require(games[gameId].startTime == 0, "Game already exists");
-        
-        games[gameId] = GameRecord({
-            gameId: gameId,
-            startTime: uint64(block.timestamp),
-            endTime: 0,
-            players: players,
-            winner: bytes32(0),
-            decisionRootHash: bytes32(0),
-            metadataURI: "",
-            finalized: false
-        });
-        
-        emit GameStarted(gameId, players, uint64(block.timestamp));
-    }
-    
-    /**
-     * @notice 批量提交决策哈希（一局结束后调用）
-     * @param gameId 游戏 ID
-     * @param hashes 本局所有决策哈希数组
-     */
-    function submitDecisionBatch(
-        bytes32 gameId,
-        bytes32[] calldata hashes
-    ) external onlyAuthorized gameExists(gameId) {
-        require(!games[gameId].finalized, "Game already finalized");
-        
-        for (uint256 i = 0; i < hashes.length; i++) {
-            decisionHashes[gameId][i] = hashes[i];
-            emit DecisionRecorded(gameId, i, hashes[i]);
-        }
-    }
-    
-    /**
-     * @notice 完成游戏并提交最终结果
-     * @param gameId 游戏 ID
-     * @param winner 获胜者 ID
-     * @param merkleRoot 所有决策的 Merkle Root
-     * @param metadataURI 完整数据的 IPFS/Arweave 链接
-     */
-    function finalizeGame(
-        bytes32 gameId,
-        bytes32 winner,
-        bytes32 merkleRoot,
-        string calldata metadataURI
-    ) external onlyAuthorized gameExists(gameId) {
-        require(!games[gameId].finalized, "Already finalized");
-        
-        GameRecord storage game = games[gameId];
-        game.endTime = uint64(block.timestamp);
-        game.winner = winner;
-        game.decisionRootHash = merkleRoot;
-        game.metadataURI = metadataURI;
-        game.finalized = true;
-        
-        verifiedGames.push(gameId);
-        
-        emit GameFinalized(gameId, winner, merkleRoot);
-    }
-    
-    // ============ 验证函数 ============
-    
-    /**
-     * @notice 验证单个决策是否属于某局游戏
-     * @param gameId 游戏 ID
-     * @param roundNumber 回合数
-     * @param decisionData 原始决策数据
-     */
-    function verifyDecision(
-        bytes32 gameId,
-        uint256 roundNumber,
-        bytes calldata decisionData
-    ) external view gameExists(gameId) returns (bool) {
-        bytes32 computedHash = keccak256(decisionData);
-        return decisionHashes[gameId][roundNumber] == computedHash;
-    }
-    
-    /**
-     * @notice 使用 Merkle Proof 验证决策
-     * @param gameId 游戏 ID
-     * @param decisionHash 待验证的决策哈希
-     * @param proof Merkle 证明路径
-     */
-    function verifyWithMerkleProof(
+    /// @notice 提交游戏记录
+    /// @param gameId 游戏唯一ID
+    /// @param decisionHash 所有决策的keccak256哈希
+    /// @param ipfsCid IPFS CID
+    function commitGame(
         bytes32 gameId,
         bytes32 decisionHash,
-        bytes32[] calldata proof
-    ) external view gameExists(gameId) returns (bool) {
-        require(games[gameId].finalized, "Game not finalized");
-        return MerkleProof.verify(proof, games[gameId].decisionRootHash, decisionHash);
+        string calldata ipfsCid
+    ) external {
+        require(games[gameId].timestamp == 0, "Game already exists");
+        
+        games[gameId] = GameCommitment({
+            decisionHash: decisionHash,
+            ipfsCid: ipfsCid,
+            timestamp: block.timestamp,
+            submitter: msg.sender
+        });
+        
+        gameIds.push(gameId);
+        
+        emit GameCommitted(gameId, decisionHash, ipfsCid, block.timestamp);
+    }
+    
+    /// @notice 验证决策哈希 [核心：用于演示]
+    /// @param gameId 游戏ID
+    /// @param rawDecisionsJson 原始决策JSON字符串
+    /// @return matched 是否匹配
+    /// @return storedHash 链上存储的哈希
+    /// @return computedHash 计算得到的哈希
+    function verifyHash(
+        bytes32 gameId,
+        string calldata rawDecisionsJson
+    ) external returns (bool matched, bytes32 storedHash, bytes32 computedHash) {
+        require(games[gameId].timestamp > 0, "Game not found");
+        
+        storedHash = games[gameId].decisionHash;
+        computedHash = keccak256(bytes(rawDecisionsJson));
+        matched = (storedHash == computedHash);
+        
+        emit VerificationPerformed(gameId, computedHash, matched);
+        
+        return (matched, storedHash, computedHash);
+    }
+    
+    /// @notice 纯视图验证（不产生事件，省Gas）
+    function verifyHashView(
+        bytes32 gameId,
+        string calldata rawDecisionsJson
+    ) external view returns (bool matched, bytes32 storedHash, bytes32 computedHash) {
+        require(games[gameId].timestamp > 0, "Game not found");
+        
+        storedHash = games[gameId].decisionHash;
+        computedHash = keccak256(bytes(rawDecisionsJson));
+        matched = (storedHash == computedHash);
+        
+        return (matched, storedHash, computedHash);
     }
     
     // ============ 查询函数 ============
     
-    function getGame(bytes32 gameId) external view returns (GameRecord memory) {
-        return games[gameId];
+    function getGame(bytes32 gameId) external view returns (
+        bytes32 decisionHash,
+        string memory ipfsCid,
+        uint256 timestamp,
+        address submitter
+    ) {
+        GameCommitment memory g = games[gameId];
+        return (g.decisionHash, g.ipfsCid, g.timestamp, g.submitter);
     }
     
-    function getDecisionHash(bytes32 gameId, uint256 roundNumber) external view returns (bytes32) {
-        return decisionHashes[gameId][roundNumber];
-    }
-    
-    function getVerifiedGamesCount() external view returns (uint256) {
-        return verifiedGames.length;
+    function getGameCount() external view returns (uint256) {
+        return gameIds.length;
     }
     
     function getRecentGames(uint256 count) external view returns (bytes32[] memory) {
-        uint256 len = verifiedGames.length;
+        uint256 len = gameIds.length;
         uint256 returnCount = count > len ? len : count;
         bytes32[] memory recent = new bytes32[](returnCount);
         
         for (uint256 i = 0; i < returnCount; i++) {
-            recent[i] = verifiedGames[len - 1 - i];
+            recent[i] = gameIds[len - 1 - i];
         }
         return recent;
     }
 }
 ```
 
-### 3.3 事件日志合约
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-contract PokerEventLogger {
-    
-    // 详细的游戏事件（用于前端回放）
-    event DetailedAction(
-        bytes32 indexed gameId,
-        bytes32 indexed agentId,
-        uint8 phase,           // 0=preflop, 1=flop, 2=turn, 3=river
-        uint8 actionType,      // 0=fold, 1=check, 2=call, 3=raise, 4=all-in
-        uint256 amount,
-        uint64 timestamp
-    );
-    
-    event PhaseChange(
-        bytes32 indexed gameId,
-        uint8 newPhase,
-        bytes32 communityCardsHash
-    );
-    
-    event PotUpdate(
-        bytes32 indexed gameId,
-        uint256 potSize,
-        uint256[] playerChips
-    );
-    
-    function logAction(
-        bytes32 gameId,
-        bytes32 agentId,
-        uint8 phase,
-        uint8 actionType,
-        uint256 amount
-    ) external {
-        emit DetailedAction(
-            gameId, 
-            agentId, 
-            phase, 
-            actionType, 
-            amount, 
-            uint64(block.timestamp)
-        );
-    }
-}
-```
-
 ---
 
-## 4. 链下服务层
+## 4. 后端服务
 
-### 4.1 哈希计算服务
+### 4.1 Hash计算服务
 
 ```typescript
-import { keccak256, toUtf8Bytes, AbiCoder } from 'ethers';
+import { keccak256, toUtf8Bytes, id } from 'ethers';
 
-interface DecisionData {
+interface GameLog {
   gameId: string;
-  roundNumber: number;
-  agentId: string;
-  gameState: string;       // JSON 序列化
-  action: string;
-  amount?: number;
-  reasoning: string;
-  timestamp: number;
+  players: { id: string; name: string; avatar: string }[];
+  decisions: {
+    aiId: string;
+    action: 'allin' | 'fold';
+    speech: string;
+    timestamp: number;
+  }[];
+  communityCards: string[];
+  winner: string;
+  pot: number;
+  endTime: number;
 }
 
 class HashService {
-  
   /**
-   * 计算决策哈希
+   * 计算游戏日志的哈希
+   * 注意：JSON序列化必须稳定，不能有随机顺序
    */
-  computeDecisionHash(data: DecisionData): string {
-    const abiCoder = new AbiCoder();
-    
-    const encoded = abiCoder.encode(
-      ['bytes32', 'uint8', 'bytes32', 'string', 'string', 'uint256', 'string', 'uint64'],
-      [
-        this.stringToBytes32(data.gameId),
-        data.roundNumber,
-        this.stringToBytes32(data.agentId),
-        data.gameState,
-        data.action,
-        data.amount || 0,
-        data.reasoning,
-        data.timestamp
-      ]
-    );
-    
-    return keccak256(encoded);
+  computeDecisionHash(gameLog: GameLog): string {
+    // 确保JSON序列化顺序一致
+    const stableJson = JSON.stringify(gameLog, Object.keys(gameLog).sort());
+    return keccak256(toUtf8Bytes(stableJson));
   }
   
   /**
-   * 构建 Merkle Tree
+   * 计算gameId的bytes32表示
    */
-  buildMerkleTree(hashes: string[]): { root: string; proofs: Map<string, string[]> } {
-    const tree = new MerkleTree(hashes, keccak256, { sortPairs: true });
-    const root = tree.getHexRoot();
-    
-    const proofs = new Map<string, string[]>();
-    for (const hash of hashes) {
-      proofs.set(hash, tree.getHexProof(hash));
-    }
-    
-    return { root, proofs };
-  }
-  
-  private stringToBytes32(str: string): string {
-    return keccak256(toUtf8Bytes(str));
+  gameIdToBytes32(gameId: string): string {
+    return id(gameId); // keccak256 of gameId string
   }
 }
 ```
@@ -397,395 +252,437 @@ class HashService {
 
 ```typescript
 import { ethers, Contract, Wallet } from 'ethers';
+import { Web3Storage, File } from 'web3.storage';
 
-interface ChainConfig {
-  rpcUrl: string;
-  contractAddress: string;
-  privateKey: string;
-}
+const GAME_VERIFIER_ABI = [
+  "function commitGame(bytes32 gameId, bytes32 decisionHash, string ipfsCid) external",
+  "function verifyHashView(bytes32 gameId, string rawDecisionsJson) view returns (bool, bytes32, bytes32)",
+  "function getGame(bytes32 gameId) view returns (bytes32, string, uint256, address)",
+  "event GameCommitted(bytes32 indexed gameId, bytes32 decisionHash, string ipfsCid, uint256 timestamp)"
+];
 
-class BlockchainService {
+class VerificationService {
   private provider: ethers.JsonRpcProvider;
   private contract: Contract;
   private wallet: Wallet;
-  
-  constructor(config: ChainConfig) {
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
-    this.wallet = new Wallet(config.privateKey, this.provider);
-    this.contract = new Contract(
-      config.contractAddress,
-      POKER_VERIFIER_ABI,
-      this.wallet
-    );
-  }
-  
-  /**
-   * 开始游戏
-   */
-  async startGame(gameId: string, players: string[]): Promise<string> {
-    const playerBytes = players.map(p => ethers.id(p));
-    const tx = await this.contract.startGame(
-      ethers.id(gameId),
-      playerBytes
-    );
-    return tx.hash;
-  }
-  
-  /**
-   * 批量提交决策哈希
-   */
-  async submitDecisions(gameId: string, hashes: string[]): Promise<string> {
-    const tx = await this.contract.submitDecisionBatch(
-      ethers.id(gameId),
-      hashes
-    );
-    return tx.hash;
-  }
-  
-  /**
-   * 完成游戏
-   */
-  async finalizeGame(
-    gameId: string,
-    winner: string,
-    merkleRoot: string,
-    metadataURI: string
-  ): Promise<string> {
-    const tx = await this.contract.finalizeGame(
-      ethers.id(gameId),
-      ethers.id(winner),
-      merkleRoot,
-      metadataURI
-    );
-    return tx.hash;
-  }
-  
-  /**
-   * 验证决策
-   */
-  async verifyDecision(
-    gameId: string,
-    roundNumber: number,
-    decisionData: string
-  ): Promise<boolean> {
-    return await this.contract.verifyDecision(
-      ethers.id(gameId),
-      roundNumber,
-      ethers.toUtf8Bytes(decisionData)
-    );
-  }
-  
-  /**
-   * 获取游戏记录
-   */
-  async getGameRecord(gameId: string): Promise<any> {
-    return await this.contract.getGame(ethers.id(gameId));
-  }
-}
-```
-
-### 4.3 IPFS 存储服务
-
-```typescript
-import { create, IPFSHTTPClient } from 'ipfs-http-client';
-
-interface GameMetadata {
-  gameId: string;
-  players: AIPersonality[];
-  timeline: DecisionLog[];
-  result: GameResult;
-  statistics: GameStatistics;
-}
-
-class IPFSStorageService {
-  private client: IPFSHTTPClient;
-  
-  constructor(endpoint: string) {
-    this.client = create({ url: endpoint });
-  }
-  
-  /**
-   * 上传游戏完整数据
-   */
-  async uploadGameData(metadata: GameMetadata): Promise<string> {
-    const data = JSON.stringify(metadata);
-    const result = await this.client.add(data);
-    return `ipfs://${result.cid.toString()}`;
-  }
-  
-  /**
-   * 获取游戏数据
-   */
-  async getGameData(cid: string): Promise<GameMetadata> {
-    const stream = this.client.cat(cid);
-    let data = '';
-    for await (const chunk of stream) {
-      data += new TextDecoder().decode(chunk);
-    }
-    return JSON.parse(data);
-  }
-}
-```
-
----
-
-## 5. 验证流程
-
-### 5.1 完整验证流程图
-
-```
-游戏进行中
-    │
-    ▼
-┌─────────────────────────────────────┐
-│  每个决策生成时，计算并存储哈希      │
-│  hash = keccak256(gameState+action) │
-└────────────────┬────────────────────┘
-                 │
-                 ▼
-游戏结束
-    │
-    ▼
-┌─────────────────────────────────────┐
-│  构建 Merkle Tree                   │
-│  root = buildMerkleTree(allHashes)  │
-└────────────────┬────────────────────┘
-                 │
-    ┌────────────┴────────────┐
-    ▼                         ▼
-┌──────────────┐      ┌──────────────────┐
-│ 上链 Merkle  │      │ 上传完整数据     │
-│ Root + 结果  │      │ 到 IPFS          │
-└──────────────┘      └──────────────────┘
-                 │
-                 ▼
-         任意时刻可验证
-                 │
-    ┌────────────┴────────────┐
-    ▼                         ▼
-┌──────────────┐      ┌──────────────────┐
-│ 链上快速验证 │      │ 完整数据审计     │
-│ (Merkle Proof)│     │ (从 IPFS 获取)   │
-└──────────────┘      └──────────────────┘
-```
-
-### 5.2 验证接口实现
-
-```typescript
-class VerificationService {
-  private blockchain: BlockchainService;
-  private ipfs: IPFSStorageService;
+  private w3s: Web3Storage;
   private hashService: HashService;
   
+  constructor(config: {
+    rpcUrl: string;
+    contractAddress: string;
+    privateKey: string;
+    web3StorageToken: string;
+  }) {
+    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    this.wallet = new Wallet(config.privateKey, this.provider);
+    this.contract = new Contract(config.contractAddress, GAME_VERIFIER_ABI, this.wallet);
+    this.w3s = new Web3Storage({ token: config.web3StorageToken });
+    this.hashService = new HashService();
+  }
+  
   /**
-   * 快速验证：使用 Merkle Proof
+   * 完整流程：上传IPFS + 写入合约
    */
-  async quickVerify(
-    gameId: string,
-    roundNumber: number,
-    claimedDecision: DecisionData
-  ): Promise<VerificationResult> {
-    // 1. 计算声称决策的哈希
-    const computedHash = this.hashService.computeDecisionHash(claimedDecision);
+  async commitGame(gameLog: GameLog): Promise<{
+    txHash: string;
+    ipfsCid: string;
+    decisionHash: string;
+    explorerUrl: string;
+  }> {
+    // 1. 计算哈希
+    const decisionHash = this.hashService.computeDecisionHash(gameLog);
+    const gameIdBytes32 = this.hashService.gameIdToBytes32(gameLog.gameId);
     
-    // 2. 从链上获取游戏记录
-    const gameRecord = await this.blockchain.getGameRecord(gameId);
+    // 2. 上传到IPFS
+    const jsonBlob = new Blob([JSON.stringify(gameLog, null, 2)], { type: 'application/json' });
+    const file = new File([jsonBlob], `${gameLog.gameId}.json`);
+    const cid = await this.w3s.put([file]);
     
-    // 3. 获取存储的 Merkle Proof（通常缓存在链下）
-    const proof = await this.getStoredProof(gameId, computedHash);
-    
-    // 4. 验证
-    const isValid = await this.blockchain.verifyWithMerkleProof(
-      gameId,
-      computedHash,
-      proof
-    );
+    // 3. 写入合约
+    const tx = await this.contract.commitGame(gameIdBytes32, decisionHash, cid);
+    const receipt = await tx.wait();
     
     return {
-      valid: isValid,
-      computedHash,
-      storedRoot: gameRecord.decisionRootHash,
-      timestamp: Date.now()
+      txHash: receipt.hash,
+      ipfsCid: cid,
+      decisionHash,
+      explorerUrl: `https://explorer.monad.xyz/tx/${receipt.hash}`
     };
   }
   
   /**
-   * 完整审计：从 IPFS 获取并验证所有数据
+   * 验证游戏（供前端调用）
    */
-  async fullAudit(gameId: string): Promise<AuditReport> {
-    // 1. 获取链上记录
-    const gameRecord = await this.blockchain.getGameRecord(gameId);
-    
-    // 2. 从 IPFS 获取完整数据
-    const fullData = await this.ipfs.getGameData(gameRecord.metadataURI);
-    
-    // 3. 重新计算所有哈希
-    const recomputedHashes = fullData.timeline.map(decision => 
-      this.hashService.computeDecisionHash(decision)
+  async verifyGame(gameId: string, rawJson: string): Promise<{
+    matched: boolean;
+    storedHash: string;
+    computedHash: string;
+  }> {
+    const gameIdBytes32 = this.hashService.gameIdToBytes32(gameId);
+    const [matched, storedHash, computedHash] = await this.contract.verifyHashView(
+      gameIdBytes32,
+      rawJson
     );
     
-    // 4. 重建 Merkle Tree
-    const { root } = this.hashService.buildMerkleTree(recomputedHashes);
+    return { matched, storedHash, computedHash };
+  }
+  
+  /**
+   * 获取游戏的IPFS数据
+   */
+  async fetchGameData(ipfsCid: string): Promise<GameLog> {
+    const response = await fetch(`https://w3s.link/ipfs/${ipfsCid}`);
+    return response.json();
+  }
+}
+```
+
+### 4.3 API路由
+
+```typescript
+// routes/verify.ts
+import { FastifyInstance } from 'fastify';
+
+export async function verifyRoutes(app: FastifyInstance) {
+  
+  // 获取游戏链上记录
+  app.get('/api/verify/:gameId', async (request, reply) => {
+    const { gameId } = request.params as { gameId: string };
     
-    // 5. 验证 Root 是否匹配
-    const isValid = root === gameRecord.decisionRootHash;
+    const record = await verificationService.getGameRecord(gameId);
+    if (!record) {
+      return reply.code(404).send({ error: 'Game not found on chain' });
+    }
     
     return {
       gameId,
-      valid: isValid,
-      onChainRoot: gameRecord.decisionRootHash,
-      recomputedRoot: root,
-      totalDecisions: fullData.timeline.length,
-      auditTimestamp: Date.now()
+      decisionHash: record.decisionHash,
+      ipfsCid: record.ipfsCid,
+      timestamp: record.timestamp,
+      ipfsUrl: `https://w3s.link/ipfs/${record.ipfsCid}`,
+      explorerUrl: `https://explorer.monad.xyz/address/${CONTRACT_ADDRESS}`
     };
-  }
+  });
+  
+  // 执行验证
+  app.post('/api/verify/:gameId', async (request, reply) => {
+    const { gameId } = request.params as { gameId: string };
+    const { rawJson } = request.body as { rawJson: string };
+    
+    const result = await verificationService.verifyGame(gameId, rawJson);
+    
+    return {
+      gameId,
+      verified: result.matched,
+      storedHash: result.storedHash,
+      computedHash: result.computedHash,
+      message: result.matched 
+        ? '✅ 数据完整性验证通过！链上哈希与原始数据匹配。'
+        : '❌ 验证失败：数据可能已被篡改。'
+    };
+  });
 }
+```
 
-interface VerificationResult {
-  valid: boolean;
-  computedHash: string;
-  storedRoot: string;
-  timestamp: number;
-}
+---
 
-interface AuditReport {
+## 5. 前端验证面板 [新增]
+
+### 5.1 验证面板组件
+
+```tsx
+// components/Verify/VerificationPanel.tsx
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { keccak256, toUtf8Bytes } from 'ethers';
+
+interface VerificationPanelProps {
   gameId: string;
-  valid: boolean;
-  onChainRoot: string;
-  recomputedRoot: string;
-  totalDecisions: number;
-  auditTimestamp: number;
+  ipfsCid: string;
+  onChainHash: string;
+  explorerUrl: string;
+}
+
+export function VerificationPanel({ 
+  gameId, 
+  ipfsCid, 
+  onChainHash,
+  explorerUrl 
+}: VerificationPanelProps) {
+  const [step, setStep] = useState<'idle' | 'fetching' | 'computing' | 'comparing' | 'done'>('idle');
+  const [rawData, setRawData] = useState<string>('');
+  const [computedHash, setComputedHash] = useState<string>('');
+  const [isMatch, setIsMatch] = useState<boolean | null>(null);
+  
+  const runVerification = async () => {
+    // Step 1: 从IPFS获取数据
+    setStep('fetching');
+    const response = await fetch(`https://w3s.link/ipfs/${ipfsCid}`);
+    const data = await response.text();
+    setRawData(data);
+    
+    // Step 2: 本地计算哈希
+    await new Promise(r => setTimeout(r, 500)); // 戏剧性延迟
+    setStep('computing');
+    const hash = keccak256(toUtf8Bytes(data));
+    setComputedHash(hash);
+    
+    // Step 3: 比对
+    await new Promise(r => setTimeout(r, 500));
+    setStep('comparing');
+    const matched = hash.toLowerCase() === onChainHash.toLowerCase();
+    setIsMatch(matched);
+    
+    // Step 4: 完成
+    await new Promise(r => setTimeout(r, 300));
+    setStep('done');
+  };
+  
+  return (
+    <div className="bg-gray-900 rounded-xl p-6 max-w-2xl">
+      <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+        🔗 链上验证
+      </h3>
+      
+      {step === 'idle' && (
+        <button
+          onClick={runVerification}
+          className="w-full py-4 bg-gradient-to-r from-blue-600 to-purple-600 
+                     rounded-lg font-bold text-white text-lg
+                     hover:from-blue-500 hover:to-purple-500 transition"
+        >
+          🔍 验证游戏数据完整性
+        </button>
+      )}
+      
+      <AnimatePresence mode="wait">
+        {step !== 'idle' && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-4"
+          >
+            {/* Step 1: 获取IPFS数据 */}
+            <StepIndicator 
+              status={step === 'fetching' ? 'loading' : 'done'}
+              label="从 IPFS 获取原始数据"
+            />
+            
+            {/* Step 2: 计算哈希 */}
+            <StepIndicator 
+              status={
+                step === 'fetching' ? 'pending' :
+                step === 'computing' ? 'loading' : 'done'
+              }
+              label="本地计算 keccak256 哈希"
+            />
+            
+            {/* Step 3: 比对 */}
+            <StepIndicator 
+              status={
+                ['fetching', 'computing'].includes(step) ? 'pending' :
+                step === 'comparing' ? 'loading' : 'done'
+              }
+              label="与链上哈希比对"
+            />
+            
+            {/* 结果展示 */}
+            {step === 'done' && (
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className={`p-4 rounded-lg ${
+                  isMatch ? 'bg-green-900/50 border border-green-500' : 'bg-red-900/50 border border-red-500'
+                }`}
+              >
+                <div className="text-center mb-4">
+                  <span className="text-5xl">{isMatch ? '✅' : '❌'}</span>
+                  <h4 className={`text-xl font-bold mt-2 ${isMatch ? 'text-green-400' : 'text-red-400'}`}>
+                    {isMatch ? '验证通过！数据完整' : '验证失败！数据可能被篡改'}
+                  </h4>
+                </div>
+                
+                <div className="space-y-2 text-sm font-mono">
+                  <div>
+                    <span className="text-gray-400">链上哈希: </span>
+                    <span className="text-blue-400 break-all">{onChainHash}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">计算哈希: </span>
+                    <span className={`break-all ${isMatch ? 'text-green-400' : 'text-red-400'}`}>
+                      {computedHash}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2 mt-4">
+                  <a 
+                    href={`https://w3s.link/ipfs/${ipfsCid}`}
+                    target="_blank"
+                    className="flex-1 py-2 bg-blue-600 rounded text-center text-white text-sm"
+                  >
+                    📦 查看IPFS数据
+                  </a>
+                  <a 
+                    href={explorerUrl}
+                    target="_blank"
+                    className="flex-1 py-2 bg-purple-600 rounded text-center text-white text-sm"
+                  >
+                    📜 区块浏览器
+                  </a>
+                </div>
+              </motion.div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function StepIndicator({ status, label }: { 
+  status: 'pending' | 'loading' | 'done';
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      {status === 'pending' && <span className="text-gray-500">○</span>}
+      {status === 'loading' && (
+        <motion.span 
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          className="text-yellow-400"
+        >
+          ◐
+        </motion.span>
+      )}
+      {status === 'done' && <span className="text-green-400">✓</span>}
+      <span className={status === 'pending' ? 'text-gray-500' : 'text-white'}>
+        {label}
+      </span>
+    </div>
+  );
+}
+```
+
+### 5.2 游戏结束弹窗（含验证入口）
+
+```tsx
+// components/GameEndModal.tsx
+export function GameEndModal({ 
+  winner, 
+  pot, 
+  verificationData 
+}: GameEndModalProps) {
+  const [showVerify, setShowVerify] = useState(false);
+  
+  return (
+    <motion.div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+      <div className="bg-gray-900 rounded-2xl p-8 max-w-lg text-center">
+        {/* 获胜者展示 */}
+        <div className="text-6xl mb-4">{winner.avatar}</div>
+        <h2 className="text-3xl font-bold text-yellow-400 mb-2">
+          {winner.name} 获胜！
+        </h2>
+        <p className="text-2xl text-white mb-6">赢得 ${pot}</p>
+        
+        {/* 链上存证徽章 */}
+        <div className="bg-green-900/30 border border-green-500 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-center gap-2 text-green-400">
+            <span>🔗</span>
+            <span>已存证到 Monad 链上</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Tx: {verificationData.txHash.slice(0, 10)}...
+          </p>
+        </div>
+        
+        {/* 操作按钮 */}
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowVerify(true)}
+            className="flex-1 py-3 bg-blue-600 rounded-lg font-bold text-white"
+          >
+            🔍 验证数据
+          </button>
+          <button className="flex-1 py-3 bg-gray-700 rounded-lg font-bold text-white">
+            🎲 下一局
+          </button>
+        </div>
+      </div>
+      
+      {/* 验证面板弹出 */}
+      {showVerify && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+          <VerificationPanel {...verificationData} />
+        </div>
+      )}
+    </motion.div>
+  );
 }
 ```
 
 ---
 
-## 6. 部署配置
+## 6. 开发计划
 
-### 6.1 网络配置
+| 任务 | 时间 | 优先级 |
+|------|------|--------|
+| 智能合约编写 | 1h | P0 |
+| 合约测试 + 部署 | 1h | P0 |
+| HashService + 链交互 | 2h | P0 |
+| **前端验证面板** | **2h** | **P0** |
 
-```typescript
-const NETWORK_CONFIGS = {
+**总计**: 6h
+
+---
+
+## 7. 部署清单
+
+### 7.1 合约部署
+
+```bash
+# hardhat.config.ts
+networks: {
   monad_testnet: {
+    url: "https://testnet-rpc.monad.xyz",
     chainId: 10143,
-    rpcUrl: 'https://testnet-rpc.monad.xyz',
-    explorerUrl: 'https://testnet-explorer.monad.xyz',
-    nativeToken: 'MON'
-  },
-  polygon_mumbai: {
-    chainId: 80001,
-    rpcUrl: 'https://polygon-mumbai.g.alchemy.com/v2/YOUR_KEY',
-    explorerUrl: 'https://mumbai.polygonscan.com',
-    nativeToken: 'MATIC'
-  },
-  localhost: {
-    chainId: 31337,
-    rpcUrl: 'http://127.0.0.1:8545',
-    explorerUrl: '',
-    nativeToken: 'ETH'
+    accounts: [process.env.PRIVATE_KEY]
   }
-};
-```
-
-### 6.2 Hardhat 部署脚本
-
-```typescript
-// scripts/deploy.ts
-import { ethers } from "hardhat";
-
-async function main() {
-  const [deployer] = await ethers.getSigners();
-  console.log("Deploying contracts with account:", deployer.address);
-  
-  // 部署主合约
-  const PokerVerifier = await ethers.getContractFactory("PokerVerifier");
-  const verifier = await PokerVerifier.deploy();
-  await verifier.waitForDeployment();
-  
-  console.log("PokerVerifier deployed to:", await verifier.getAddress());
-  
-  // 部署事件日志合约
-  const EventLogger = await ethers.getContractFactory("PokerEventLogger");
-  const logger = await EventLogger.deploy();
-  await logger.waitForDeployment();
-  
-  console.log("PokerEventLogger deployed to:", await logger.getAddress());
-  
-  // 设置授权提交者
-  await verifier.setAuthorizedSubmitter(deployer.address, true);
-  console.log("Authorized submitter set");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+# 部署
+npx hardhat run scripts/deploy.ts --network monad_testnet
+```
+
+### 7.2 环境变量
+
+```bash
+# .env
+MONAD_RPC_URL=https://testnet-rpc.monad.xyz
+GAME_VERIFIER_ADDRESS=0x...  # 部署后填入
+PRIVATE_KEY=0x...
+WEB3_STORAGE_TOKEN=...
 ```
 
 ---
 
-## 7. 目录结构
+## 8. 演示话术
 
-```
-src/
-├── contracts/
-│   ├── PokerVerifier.sol        # 主验证合约
-│   ├── PokerEventLogger.sol     # 事件日志合约
-│   └── interfaces/
-│       └── IPokerVerifier.sol   # 接口定义
-├── blockchain/
-│   ├── index.ts                 # 模块入口
-│   ├── blockchain-service.ts    # 链交互服务
-│   ├── hash-service.ts          # 哈希计算服务
-│   ├── ipfs-service.ts          # IPFS 存储服务
-│   ├── verification-service.ts  # 验证服务
-│   └── config/
-│       └── networks.ts          # 网络配置
-├── scripts/
-│   ├── deploy.ts                # 部署脚本
-│   └── verify-game.ts           # 验证脚本
-└── test/
-    └── contracts/
-        ├── PokerVerifier.test.ts
-        └── integration.test.ts
-```
-
----
-
-## 8. Gas 费用估算
-
-| 操作 | Gas 估算 | Monad 费用 | Polygon 费用 |
-|------|----------|------------|--------------|
-| startGame | ~80,000 | ~$0.02 | ~$0.02 |
-| submitDecisionBatch (20条) | ~200,000 | ~$0.05 | ~$0.05 |
-| finalizeGame | ~100,000 | ~$0.03 | ~$0.03 |
-| verifyWithMerkleProof | ~30,000 | ~$0.01 | ~$0.01 |
-
-**单局游戏总成本**：约 $0.10 - $0.15
-
----
-
-## 9. 开发计划
-
-| 任务 | 预计时间 | 优先级 |
-|------|----------|--------|
-| 智能合约开发 | 4h | P0 |
-| 合约测试 | 3h | P0 |
-| 链下哈希服务 | 2h | P0 |
-| Merkle Tree 实现 | 2h | P0 |
-| 链交互服务 | 3h | P1 |
-| IPFS 集成 | 2h | P1 |
-| 验证 API | 2h | P1 |
-| 部署脚本 | 1h | P2 |
-
-**总计**: 约 19 小时（2.5个工作日）
-
----
-
-## 10. 注意事项
-
-1. **测试网优先**：始终在测试网完成开发和演示，主网部署为可选
-2. **私钥安全**：使用环境变量管理私钥，绝不硬编码
-3. **降级方案**：如果链上服务不可用，系统应能继续运行（只是无法验证）
-4. **批量优化**：避免频繁小额交易，使用批量提交降低成本
-5. **事件监听**：使用 WebSocket 订阅链上事件，实现实时同步
+> "让我展示一下可验证性是如何工作的。
+> 
+> 这是刚才那局游戏的完整记录——每个AI的决策、说的话、时间戳。
+> 
+> 游戏结束时，我们计算了这份数据的keccak256哈希值，并将它写入了Monad链上。同时，原始数据被上传到了IPFS。
+> 
+> 现在，任何人都可以：
+> 1. 从IPFS下载原始数据
+> 2. 在本地计算哈希
+> 3. 与链上存储的哈希比对
+> 
+> 如果匹配——说明数据没有被篡改。
+> 
+> **[点击验证按钮，展示验证过程]**
+> 
+> 你看，绿色勾✅，验证通过。这就是我们所说的'可验证的AI决策'。"

@@ -1,1080 +1,867 @@
-# 模块五：前端可视化界面
+# 模块五：前端可视化界面（最终版）
 
-## 1. 模块概述
+> **状态**: 最终版 v2.0 | **优先级**: P0 | **预计时间**: 12h
 
-前端模块负责展示实时对战画面、AI 思考过程、观众竞猜面板，提供流畅的观赛体验。
+## 🎯 设计目标：ESPN式"God View"直播体验
 
-### 1.1 核心职责
-- 实时渲染扑克牌桌和游戏状态
-- 展示 AI "思考过程" 动画
-- 集成观众竞猜面板
-- 游戏回放功能
+> **参考**: ESPN扑克锦标赛直播，可以看到所有人的底牌
 
-### 1.2 技术选型
-| 组件 | 选择 | 理由 |
-|------|------|------|
-| 框架 | React 18 + TypeScript | 生态成熟、类型安全 |
-| 状态管理 | Zustand | 轻量、简洁 |
-| 动画 | Framer Motion | 声明式动画、性能好 |
-| 样式 | Tailwind CSS | 快速开发、响应式 |
-| 实时通信 | Socket.io Client | 双向通信 |
-| 构建 | Vite | 快速热更新 |
+### 核心体验
 
-### 1.3 设计原则
-- **演示优先**：5分钟内让观众理解游戏
-- **动画流畅**：60fps 动画，无卡顿
-- **信息清晰**：关键数据一目了然
+| 特性 | 效果 | 优先级 |
+|------|------|--------|
+| 🎴 全透明底牌 | 观众能看到所有AI的手牌 | P0 |
+| 💬 实时对话流 | 打字机效果的AI互怼 | P0 |
+| 🎲 投注面板 | 一键下注预测获胜者 | P0 |
+| ✅ 验证面板 | 展示链上可验证流程 | P0 |
+| 📊 赔率显示 | 实时赔率变化 | P1 |
 
 ---
 
-## 2. 页面结构设计
+## 1. 整体布局
 
-### 2.1 整体布局
+### 1.1 桌面端布局（1440px+）
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                       Header                              │
-│  Logo    |    Game Status    |    Token Balance    |Auth │
-├────────────────────────────────┬─────────────────────────┤
-│                                │                         │
-│                                │    Prediction Panel     │
-│         Poker Table            │   ┌─────────────────┐   │
-│                                │   │ Market Question │   │
-│     ┌───┐   ┌───┐   ┌───┐     │   │ Option A: 2.5x  │   │
-│     │AI1│   │AI2│   │AI3│     │   │ Option B: 1.8x  │   │
-│     └───┘   └───┘   └───┘     │   │ [Place Bet]     │   │
-│            ┌─────┐             │   └─────────────────┘   │
-│            │ POT │             │                         │
-│            └─────┘             │    AI Thoughts Panel    │
-│     ┌───┐           ┌───┐     │   ┌─────────────────┐   │
-│     │AI4│           │AI5│     │   │ "我有强牌..."    │   │
-│     └───┘           └───┘     │   │ Confidence: 85% │   │
-│                                │   └─────────────────┘   │
-│     [ Community Cards ]        │                         │
-│                                │                         │
-├────────────────────────────────┴─────────────────────────┤
-│                     Action History                        │
-│ AI1 raises $200 → AI2 calls → AI3 folds → ...            │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  🃏 PokerMind Arena    ┃  Round 3 of 5  ┃  ⏱ 00:47  ┃  🔗 Verified  │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │                                                             │   │
+│   │    🔥 火焰                              🧊 冰山              │   │
+│   │    A♠ K♥                               Q♦ Q♣               │   │
+│   │    $800  [ALL-IN]                      $1200               │   │
+│   │                                                             │   │
+│   │                   ┌─────────────────┐                       │   │
+│   │                   │    J♠ 10♥ 9♣    │                       │   │
+│   │                   │     POT $450    │                       │   │
+│   │                   └─────────────────┘                       │   │
+│   │                                                             │   │
+│   │    🎭 诡影                              🧠 逻辑              │   │
+│   │    8♠ 8♥                               A♦ J♦               │   │
+│   │    [FOLD]                              $950                │   │
+│   │                                                             │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+├─────────────────────────┬────────────────────────────────────────────┤
+│                         │                                            │
+│   💬 AI 对话            │   🎲 预测市场                              │
+│   ──────────────────    │   ──────────────────                       │
+│   🔥 火焰: @冰山 又缩了 │   谁会赢得这场比赛？                       │
+│             ？来啊！▊   │                                            │
+│                         │   🔥 火焰  [====   ] 45% | 1.8x           │
+│   🧊 冰山: 冲动的代价.. │   🧊 冰山  [===    ] 35% | 2.4x           │
+│                         │   🎭 诡影  [=      ] 12% | 6.5x           │
+│   🎭 诡影: Fold...      │   🧠 逻辑  [=      ]  8% | 9.2x           │
+│                         │                                            │
+│                         │   [10] [25] [50] [100]                     │
+│                         │   [✓ 下注火焰 $50]                         │
+│                         │                                            │
+│                         │   总池: $2,150  |  87人参与                │
+├─────────────────────────┴────────────────────────────────────────────┤
+│  🔗 验证: Game #0x3f2a.. committed to Monad | View TX | IPFS | ✅    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 页面路由
-
-```typescript
-const routes = [
-  { path: '/', component: HomePage },           // 首页/大厅
-  { path: '/game/:id', component: GameRoom },   // 游戏房间
-  { path: '/history', component: GameHistory }, // 历史记录
-  { path: '/profile', component: UserProfile }, // 用户中心
-  { path: '/verify/:gameId', component: VerificationPage }, // 验证页
-];
-```
-
----
-
-## 3. 组件设计
-
-### 3.1 核心组件树
+### 1.2 组件结构
 
 ```
 <App>
 ├── <Header />
 │   ├── <Logo />
-│   ├── <GameStatus />
-│   ├── <TokenBalance />
-│   └── <UserMenu />
+│   ├── <RoundIndicator />
+│   ├── <Timer />
+│   └── <VerificationBadge />
 │
 ├── <GameRoom>
 │   ├── <PokerTable>
-│   │   ├── <CommunityCards />
-│   │   ├── <PotDisplay />
-│   │   └── <PlayerSeat /> x 4-6
-│   │       ├── <PlayerAvatar />
-│   │       ├── <ChipStack />
-│   │       ├── <HoleCards />
-│   │       ├── <ActionIndicator />
-│   │       └── <ThinkingBubble />
-│   │
-│   ├── <SidePanel>
-│   │   ├── <PredictionMarket />
-│   │   │   ├── <MarketQuestion />
-│   │   │   ├── <OddsDisplay />
-│   │   │   └── <BetControls />
+│   │   ├── <PlayerSeat /> x 4
+│   │   │   ├── <Avatar />
+│   │   │   ├── <HoleCards />  ← ESPN式全透明
+│   │   │   ├── <ChipStack />
+│   │   │   └── <ActionBadge />
 │   │   │
-│   │   └── <AIThoughts />
-│   │       ├── <ReasoningText />
-│   │       ├── <ConfidenceMeter />
-│   │       └── <OpponentRead />
+│   │   ├── <CommunityCards />
+│   │   └── <PotDisplay />
 │   │
-│   └── <ActionTimeline />
+│   ├── <BottomPanel>
+│   │   ├── <DialogueStream />  ← 打字机效果
+│   │   └── <BettingPanel />    ← 预测市场
+│   │
+│   └── <VerificationBar />     ← 链上验证状态
 │
-└── <Footer />
-```
-
-### 3.2 类型定义
-
-```typescript
-// 组件 Props 类型
-interface PlayerSeatProps {
-  player: Player;
-  position: SeatPosition;
-  isActive: boolean;
-  isDealer: boolean;
-  showCards: boolean;
-}
-
-interface CommunityCardsProps {
-  cards: Card[];
-  phase: GamePhase;
-}
-
-interface PredictionMarketProps {
-  market: PredictionMarket;
-  userBalance: number;
-  onPlaceBet: (optionId: string, amount: number) => void;
-}
-
-interface AIThoughtsProps {
-  agentId: string;
-  decision: AIDecision | null;
-  isThinking: boolean;
-}
-
-type SeatPosition = 'top-left' | 'top-center' | 'top-right' | 
-                    'bottom-left' | 'bottom-right';
+└── <GameEndModal />            ← 结算 + 验证入口
 ```
 
 ---
 
-## 4. 扑克牌桌组件
+## 2. 技术栈
 
-### 4.1 桌面布局
+| 组件 | 选择 | 理由 |
+|------|------|------|
+| 框架 | React 18 | 生态成熟 |
+| 状态 | Zustand | 轻量简洁 |
+| 动画 | Framer Motion | 声明式、性能好 |
+| 样式 | Tailwind CSS | 快速开发 |
+| 实时 | Socket.io | 双向通信 |
+| 构建 | Vite | 快速热更新 |
+
+---
+
+## 3. 核心组件
+
+### 3.1 牌桌组件（God View）
 
 ```tsx
-// components/PokerTable/index.tsx
+// components/Table/PokerTable.tsx
 import { motion } from 'framer-motion';
+import { useGameStore } from '@/stores/game';
+import { PlayerSeat } from './PlayerSeat';
+import { CommunityCards } from './CommunityCards';
+import { PotDisplay } from './PotDisplay';
 
-const SEAT_POSITIONS = {
-  4: [
-    { id: 'top-left', x: '20%', y: '10%' },
-    { id: 'top-right', x: '80%', y: '10%' },
-    { id: 'bottom-left', x: '20%', y: '80%' },
-    { id: 'bottom-right', x: '80%', y: '80%' },
-  ],
-  6: [
-    { id: 'top-left', x: '15%', y: '10%' },
-    { id: 'top-center', x: '50%', y: '5%' },
-    { id: 'top-right', x: '85%', y: '10%' },
-    { id: 'bottom-left', x: '15%', y: '85%' },
-    { id: 'bottom-center', x: '50%', y: '90%' },
-    { id: 'bottom-right', x: '85%', y: '85%' },
-  ],
-};
+const SEAT_POSITIONS = [
+  { x: '15%', y: '15%' },   // 左上 - 火焰
+  { x: '85%', y: '15%' },   // 右上 - 冰山
+  { x: '15%', y: '75%' },   // 左下 - 诡影
+  { x: '85%', y: '75%' },   // 右下 - 逻辑
+];
 
-export function PokerTable({ gameState }: { gameState: GameState }) {
-  const positions = SEAT_POSITIONS[gameState.players.length as 4 | 6];
+export function PokerTable() {
+  const players = useGameStore(s => s.players);
+  const communityCards = useGameStore(s => s.communityCards);
+  const pot = useGameStore(s => s.pot);
+  const activePlayerId = useGameStore(s => s.activePlayerId);
   
   return (
-    <div className="relative w-full h-[600px] bg-gradient-to-b from-green-800 to-green-900 rounded-[50%] border-8 border-amber-800 shadow-2xl">
-      {/* 桌面纹理 */}
-      <div className="absolute inset-0 opacity-20 bg-[url('/felt-texture.png')]" />
+    <div className="relative w-full h-[500px] bg-gradient-to-b from-green-800 to-green-900 rounded-3xl border-4 border-amber-700 shadow-2xl">
       
       {/* 公共牌区域 */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-        <CommunityCards 
-          cards={gameState.communityCards} 
-          phase={gameState.phase}
-        />
+        <CommunityCards cards={communityCards} />
+        <PotDisplay pot={pot} />
       </div>
       
-      {/* 底池显示 */}
-      <PotDisplay pot={gameState.pot} sidePots={gameState.sidePots} />
-      
       {/* 玩家座位 */}
-      {gameState.players.map((player, index) => (
+      {players.map((player, index) => (
         <PlayerSeat
           key={player.id}
           player={player}
-          position={positions[index]}
-          isActive={gameState.activePlayerIndex === index}
-          isDealer={gameState.dealerPosition === index}
-          showCards={gameState.phase === 'showdown' || player.status === 'folded'}
+          position={SEAT_POSITIONS[index]}
+          isActive={player.id === activePlayerId}
         />
       ))}
-      
-      {/* 庄家按钮 */}
-      <DealerButton position={positions[gameState.dealerPosition]} />
     </div>
   );
 }
 ```
 
-### 4.2 扑克牌组件
+### 3.2 玩家座位（含底牌展示）
 
 ```tsx
-// components/PokerTable/Card.tsx
+// components/Table/PlayerSeat.tsx
+import { motion } from 'framer-motion';
+import { PlayingCard } from './PlayingCard';
+
+interface PlayerSeatProps {
+  player: {
+    id: string;
+    name: string;
+    avatar: string;
+    holeCards: [string, string];  // ["A♠", "K♥"]
+    stack: number;
+    status: 'active' | 'allin' | 'folded' | 'eliminated';
+    lastAction?: string;
+  };
+  position: { x: string; y: string };
+  isActive: boolean;
+}
+
+export function PlayerSeat({ player, position, isActive }: PlayerSeatProps) {
+  const isFolded = player.status === 'folded';
+  const isEliminated = player.status === 'eliminated';
+  
+  return (
+    <motion.div
+      className="absolute transform -translate-x-1/2 -translate-y-1/2"
+      style={{ left: position.x, top: position.y }}
+      animate={{ 
+        scale: isActive ? 1.05 : 1,
+        opacity: isEliminated ? 0.4 : 1
+      }}
+    >
+      <div className={`flex flex-col items-center p-3 rounded-xl
+        ${isActive ? 'bg-yellow-500/30 ring-2 ring-yellow-400' : 'bg-black/40'}
+        ${isFolded ? 'opacity-60' : ''}
+      `}>
+        
+        {/* 头像 + 名字 */}
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-3xl">{player.avatar}</span>
+          <span className="text-white font-bold">{player.name}</span>
+        </div>
+        
+        {/* 🔑 核心：底牌展示（ESPN风格） */}
+        <div className="flex gap-1 mb-2">
+          <PlayingCard card={player.holeCards[0]} faded={isFolded} />
+          <PlayingCard card={player.holeCards[1]} faded={isFolded} />
+        </div>
+        
+        {/* 筹码 */}
+        <div className="text-yellow-400 font-bold text-lg">
+          ${player.stack.toLocaleString()}
+        </div>
+        
+        {/* 行动标签 */}
+        {player.status === 'allin' && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="mt-1 px-3 py-1 bg-red-600 rounded-full text-white text-sm font-bold"
+          >
+            ALL-IN
+          </motion.div>
+        )}
+        {isFolded && (
+          <div className="mt-1 px-3 py-1 bg-gray-600 rounded-full text-gray-300 text-sm">
+            FOLD
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+```
+
+### 3.3 扑克牌组件
+
+```tsx
+// components/Table/PlayingCard.tsx
 import { motion } from 'framer-motion';
 
-interface CardProps {
-  card: Card | null;
-  faceDown?: boolean;
+interface PlayingCardProps {
+  card: string;  // "A♠", "K♥", "10♦", "J♣"
+  faded?: boolean;
   delay?: number;
 }
 
-const SUIT_COLORS = {
-  hearts: 'text-red-600',
-  diamonds: 'text-red-600',
-  clubs: 'text-gray-900',
-  spades: 'text-gray-900',
+const SUIT_COLORS: Record<string, string> = {
+  '♠': 'text-gray-900',
+  '♣': 'text-gray-900', 
+  '♥': 'text-red-600',
+  '♦': 'text-red-600',
 };
 
-const SUIT_SYMBOLS = {
-  hearts: '♥',
-  diamonds: '♦',
-  clubs: '♣',
-  spades: '♠',
-};
-
-export function Card({ card, faceDown = false, delay = 0 }: CardProps) {
+export function PlayingCard({ card, faded = false, delay = 0 }: PlayingCardProps) {
+  // 解析牌面："A♠" → rank="A", suit="♠"
+  const suit = card.slice(-1);
+  const rank = card.slice(0, -1);
+  
   return (
     <motion.div
-      initial={{ rotateY: 180, scale: 0.5, opacity: 0 }}
-      animate={{ rotateY: faceDown ? 180 : 0, scale: 1, opacity: 1 }}
+      initial={{ rotateY: 180, opacity: 0 }}
+      animate={{ rotateY: 0, opacity: faded ? 0.5 : 1 }}
       transition={{ duration: 0.4, delay }}
-      className={`
-        w-16 h-24 rounded-lg shadow-lg cursor-pointer transform-gpu
-        ${faceDown ? 'bg-gradient-to-br from-blue-700 to-blue-900' : 'bg-white'}
+      className={`w-12 h-16 bg-white rounded-lg shadow-lg flex flex-col items-center justify-center
+        ${faded ? 'grayscale' : ''}
       `}
-      style={{ transformStyle: 'preserve-3d' }}
     >
-      {!faceDown && card && (
-        <div className={`p-2 ${SUIT_COLORS[card.suit]}`}>
-          <div className="text-xl font-bold">{card.rank}</div>
-          <div className="text-2xl">{SUIT_SYMBOLS[card.suit]}</div>
-        </div>
-      )}
-      
-      {faceDown && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-12 h-16 border-2 border-white/30 rounded" />
-        </div>
-      )}
+      <span className={`text-lg font-bold ${SUIT_COLORS[suit]}`}>{rank}</span>
+      <span className={`text-xl ${SUIT_COLORS[suit]}`}>{suit}</span>
     </motion.div>
   );
 }
+```
 
-// 公共牌组件
-export function CommunityCards({ cards, phase }: { cards: Card[]; phase: GamePhase }) {
-  const visibleCount = {
-    preflop: 0,
-    flop: 3,
-    turn: 4,
-    river: 5,
-    showdown: 5,
-  }[phase] || 0;
+### 3.4 公共牌
 
+```tsx
+// components/Table/CommunityCards.tsx
+import { PlayingCard } from './PlayingCard';
+
+export function CommunityCards({ cards }: { cards: string[] }) {
   return (
-    <div className="flex gap-2">
-      {[0, 1, 2, 3, 4].map((index) => (
-        <motion.div key={index} className="relative">
-          {index < visibleCount ? (
-            <Card card={cards[index]} delay={index * 0.15} />
-          ) : (
-            <div className="w-16 h-24 rounded-lg bg-green-700/50 border-2 border-dashed border-green-600" />
-          )}
-        </motion.div>
+    <div className="flex gap-2 justify-center mb-2">
+      {cards.map((card, i) => (
+        <PlayingCard key={i} card={card} delay={i * 0.2} />
+      ))}
+      
+      {/* 空位占位符 */}
+      {[...Array(5 - cards.length)].map((_, i) => (
+        <div 
+          key={`empty-${i}`}
+          className="w-12 h-16 rounded-lg border-2 border-dashed border-green-600/50"
+        />
       ))}
     </div>
   );
 }
 ```
 
-### 4.3 玩家座位组件
+---
+
+## 4. 对话流组件（打字机效果）
+
+### 4.1 对话流
 
 ```tsx
-// components/PokerTable/PlayerSeat.tsx
+// components/Dialogue/DialogueStream.tsx
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useGameStore } from '@/stores/game';
+import { SpeechBubble } from './SpeechBubble';
 
-export function PlayerSeat({ 
-  player, 
-  position, 
-  isActive, 
-  isDealer, 
-  showCards 
-}: PlayerSeatProps) {
+export function DialogueStream() {
+  const messages = useGameStore(s => s.dialogue);
+  const typingAgent = useGameStore(s => s.typingAgent);
+  const typingText = useGameStore(s => s.typingText);
+  
   return (
-    <motion.div
-      className="absolute"
-      style={{
-        left: position.x,
-        top: position.y,
-        transform: 'translate(-50%, -50%)',
-      }}
-    >
-      {/* 活跃玩家光晕 */}
+    <div className="h-[200px] overflow-y-auto space-y-2 p-3 bg-gray-900/50 rounded-xl">
+      <h3 className="text-sm font-bold text-gray-400 mb-2">💬 AI 对话</h3>
+      
       <AnimatePresence>
-        {isActive && (
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.8, opacity: 0 }}
-            className="absolute -inset-4 bg-yellow-400/30 rounded-full blur-lg"
+        {messages.slice(-5).map((msg, i) => (
+          <SpeechBubble
+            key={i}
+            avatar={msg.avatar}
+            name={msg.name}
+            text={msg.speech}
+            target={msg.target}
+            emotion={msg.emotion}
+            isTyping={false}
           />
-        )}
+        ))}
       </AnimatePresence>
       
-      {/* 头像 */}
-      <PlayerAvatar 
-        avatar={player.avatar}
-        name={player.name}
-        status={player.status}
-      />
-      
-      {/* 筹码堆 */}
-      <ChipStack amount={player.chips} />
-      
-      {/* 手牌 */}
-      <div className="flex gap-1 mt-2">
-        <Card 
-          card={showCards ? player.holeCards[0] : null} 
-          faceDown={!showCards} 
+      {/* 正在打字的消息 */}
+      {typingAgent && (
+        <SpeechBubble
+          avatar={typingAgent.avatar}
+          name={typingAgent.name}
+          text={typingText}
+          isTyping={true}
         />
-        <Card 
-          card={showCards ? player.holeCards[1] : null} 
-          faceDown={!showCards} 
+      )}
+    </div>
+  );
+}
+```
+
+### 4.2 对话气泡
+
+```tsx
+// components/Dialogue/SpeechBubble.tsx
+import { motion } from 'framer-motion';
+
+interface SpeechBubbleProps {
+  avatar: string;
+  name: string;
+  text: string;
+  target?: string;
+  emotion?: string;
+  isTyping: boolean;
+}
+
+const EMOTION_COLORS: Record<string, string> = {
+  confident: 'border-l-yellow-500',
+  angry: 'border-l-red-500',
+  mocking: 'border-l-purple-500',
+  nervous: 'border-l-gray-400',
+  neutral: 'border-l-blue-500',
+};
+
+export function SpeechBubble({ avatar, name, text, target, emotion = 'neutral', isTyping }: SpeechBubbleProps) {
+  // 高亮@提及
+  const highlightedText = text.replace(
+    /@(\S+)/g,
+    '<span class="text-blue-400 font-bold">@$1</span>'
+  );
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      className={`flex gap-2 p-2 bg-gray-800/80 rounded-lg border-l-4 ${EMOTION_COLORS[emotion]}`}
+    >
+      <span className="text-2xl">{avatar}</span>
+      
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="font-bold text-white text-sm">{name}</span>
+          {target && (
+            <span className="text-xs text-blue-400">→ @{target}</span>
+          )}
+        </div>
+        
+        <p 
+          className="text-gray-200 text-sm"
+          dangerouslySetInnerHTML={{ __html: highlightedText }}
         />
+        
+        {isTyping && (
+          <span className="inline-block w-2 h-4 bg-white ml-0.5 animate-pulse" />
+        )}
       </div>
-      
-      {/* 当前下注 */}
-      {player.currentBet > 0 && (
-        <BetChips amount={player.currentBet} />
-      )}
-      
-      {/* 思考气泡 */}
-      {isActive && (
-        <ThinkingBubble playerId={player.id} />
-      )}
-      
-      {/* 动作标签 */}
-      <ActionIndicator lastAction={player.lastAction} />
     </motion.div>
   );
 }
+```
 
-function PlayerAvatar({ avatar, name, status }: { 
-  avatar: string; 
-  name: string; 
-  status: string;
-}) {
-  const statusColors = {
-    active: 'border-green-500',
-    folded: 'border-gray-500 grayscale',
-    'all-in': 'border-red-500',
-    out: 'border-gray-800 grayscale opacity-50',
+---
+
+## 5. 验证面板组件 🆕
+
+### 5.1 验证状态栏
+
+```tsx
+// components/Verify/VerificationBar.tsx
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { useGameStore } from '@/stores/game';
+
+export function VerificationBar() {
+  const verification = useGameStore(s => s.verification);
+  const [expanded, setExpanded] = useState(false);
+  
+  if (!verification) {
+    return (
+      <div className="bg-gray-800 p-2 rounded-lg text-center text-gray-500 text-sm">
+        🔗 等待游戏结束后链上存证...
+      </div>
+    );
+  }
+  
+  return (
+    <motion.div
+      layout
+      className="bg-gradient-to-r from-green-900/50 to-blue-900/50 rounded-lg border border-green-500/30 overflow-hidden"
+    >
+      {/* 简洁视图 */}
+      <div 
+        className="flex items-center justify-between p-3 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-green-400">✅</span>
+          <span className="text-white text-sm">
+            Game #{verification.gameId.slice(0, 8)}... committed to Monad
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-3 text-sm">
+          <a 
+            href={verification.explorerUrl}
+            target="_blank"
+            className="text-blue-400 hover:underline"
+            onClick={e => e.stopPropagation()}
+          >
+            View TX
+          </a>
+          <a 
+            href={`https://w3s.link/ipfs/${verification.ipfsCid}`}
+            target="_blank"
+            className="text-purple-400 hover:underline"
+            onClick={e => e.stopPropagation()}
+          >
+            IPFS
+          </a>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
+            className="text-yellow-400 hover:text-yellow-300"
+          >
+            🔍 Verify
+          </button>
+        </div>
+      </div>
+      
+      {/* 展开的验证面板 */}
+      {expanded && (
+        <motion.div
+          initial={{ height: 0 }}
+          animate={{ height: 'auto' }}
+          className="border-t border-green-500/30 p-4"
+        >
+          <VerificationPanel verification={verification} />
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}
+```
+
+### 5.2 验证演示面板
+
+```tsx
+// components/Verify/VerificationPanel.tsx
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { keccak256, toUtf8Bytes } from 'ethers';
+
+interface VerificationPanelProps {
+  verification: {
+    gameId: string;
+    ipfsCid: string;
+    onChainHash: string;
+    explorerUrl: string;
+  };
+}
+
+type VerifyStep = 'idle' | 'fetching' | 'computing' | 'comparing' | 'done';
+
+export function VerificationPanel({ verification }: VerificationPanelProps) {
+  const [step, setStep] = useState<VerifyStep>('idle');
+  const [rawData, setRawData] = useState<string>('');
+  const [computedHash, setComputedHash] = useState<string>('');
+  const [isMatch, setIsMatch] = useState<boolean | null>(null);
+  
+  const runVerification = async () => {
+    // Step 1: 从IPFS获取
+    setStep('fetching');
+    const response = await fetch(`https://w3s.link/ipfs/${verification.ipfsCid}`);
+    const data = await response.text();
+    setRawData(data.slice(0, 200) + '...');
+    
+    // Step 2: 计算哈希
+    await sleep(600);
+    setStep('computing');
+    const hash = keccak256(toUtf8Bytes(data));
+    setComputedHash(hash);
+    
+    // Step 3: 比对
+    await sleep(600);
+    setStep('comparing');
+    const matched = hash.toLowerCase() === verification.onChainHash.toLowerCase();
+    setIsMatch(matched);
+    
+    await sleep(400);
+    setStep('done');
   };
   
   return (
-    <div className={`
-      relative w-20 h-20 rounded-full border-4 ${statusColors[status]}
-      overflow-hidden bg-gradient-to-br from-gray-700 to-gray-900
-    `}>
-      <span className="text-4xl absolute inset-0 flex items-center justify-center">
-        {avatar}
-      </span>
-      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-1">
-        {name}
-      </div>
-    </div>
-  );
-}
-```
-
----
-
-## 5. AI 思考展示组件
-
-### 5.1 思考气泡
-
-```tsx
-// components/AIThoughts/ThinkingBubble.tsx
-import { motion } from 'framer-motion';
-
-export function ThinkingBubble({ decision, isThinking }: AIThoughtsProps) {
-  return (
-    <AnimatePresence>
-      {isThinking ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          className="absolute -top-20 left-1/2 -translate-x-1/2 bg-white rounded-xl px-4 py-2 shadow-lg"
+    <div className="space-y-4">
+      {step === 'idle' && (
+        <button
+          onClick={runVerification}
+          className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 
+                     rounded-lg font-bold text-white
+                     hover:from-blue-500 hover:to-purple-500"
         >
-          {/* 思考动画 */}
-          <div className="flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <motion.div
-                key={i}
-                animate={{ y: [-2, 2, -2] }}
-                transition={{ 
-                  duration: 0.6, 
-                  repeat: Infinity, 
-                  delay: i * 0.2 
-                }}
-                className="w-2 h-2 bg-gray-400 rounded-full"
-              />
-            ))}
-          </div>
-          
-          {/* 气泡尾巴 */}
-          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white rotate-45" />
-        </motion.div>
-      ) : decision && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          className="absolute -top-32 left-1/2 -translate-x-1/2 w-64 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl p-4 text-white shadow-2xl"
-        >
-          <div className="font-bold text-lg mb-2">
-            {getActionLabel(decision.action)}
-            {decision.amount && ` $${decision.amount}`}
-          </div>
-          
-          <p className="text-sm opacity-90 mb-2">
-            "{decision.reasoning}"
-          </p>
-          
-          <ConfidenceMeter value={decision.confidence} />
-          
-          {decision.read && (
-            <p className="text-xs opacity-75 mt-2 italic">
-              对手判读: {decision.read}
-            </p>
-          )}
-        </motion.div>
+          🔍 开始验证数据完整性
+        </button>
       )}
-    </AnimatePresence>
-  );
-}
-
-function ConfidenceMeter({ value }: { value: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs">信心:</span>
-      <div className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${value}%` }}
-          className={`h-full ${
-            value > 70 ? 'bg-green-400' : 
-            value > 40 ? 'bg-yellow-400' : 'bg-red-400'
-          }`}
-        />
-      </div>
-      <span className="text-xs font-mono">{value}%</span>
-    </div>
-  );
-}
-```
-
-### 5.2 侧边面板
-
-```tsx
-// components/SidePanel/AIThoughtsPanel.tsx
-
-export function AIThoughtsPanel({ 
-  activeAgent, 
-  decision, 
-  history 
-}: AIPanelProps) {
-  return (
-    <div className="bg-gray-900 rounded-xl p-4 h-64 overflow-hidden">
-      <h3 className="text-white font-bold mb-3 flex items-center gap-2">
-        <span className="text-xl">{activeAgent?.avatar}</span>
-        {activeAgent?.name} 思考中...
-      </h3>
       
-      {decision ? (
+      {step !== 'idle' && (
         <div className="space-y-3">
-          {/* 决策展示 */}
-          <div className="bg-gray-800 rounded-lg p-3">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xl">
-                {getActionEmoji(decision.action)} {getActionLabel(decision.action)}
-              </span>
-              {decision.amount && (
-                <span className="text-yellow-400 font-bold">
-                  ${decision.amount}
-                </span>
-              )}
-            </div>
-            
-            <p className="text-gray-300 text-sm">
-              {decision.reasoning}
-            </p>
-          </div>
+          <StepIndicator 
+            label="1. 从 IPFS 获取原始数据"
+            status={step === 'fetching' ? 'loading' : 'done'}
+          />
           
-          {/* 信心度 */}
-          <ConfidenceMeter value={decision.confidence} />
+          <StepIndicator 
+            label="2. 本地计算 keccak256 哈希"
+            status={step === 'fetching' ? 'pending' : step === 'computing' ? 'loading' : 'done'}
+          />
           
-          {/* 对手判读 */}
-          {decision.read && (
-            <div className="text-gray-400 text-sm">
-              <span className="text-gray-500">对手判读:</span> {decision.read}
-            </div>
+          <StepIndicator 
+            label="3. 与链上哈希比对"
+            status={['fetching', 'computing'].includes(step) ? 'pending' : step === 'comparing' ? 'loading' : 'done'}
+          />
+          
+          {step === 'done' && (
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className={`p-4 rounded-lg text-center ${
+                isMatch 
+                  ? 'bg-green-900/50 border border-green-500' 
+                  : 'bg-red-900/50 border border-red-500'
+              }`}
+            >
+              <div className="text-4xl mb-2">{isMatch ? '✅' : '❌'}</div>
+              <div className={`font-bold ${isMatch ? 'text-green-400' : 'text-red-400'}`}>
+                {isMatch ? '验证通过！数据完整未篡改' : '验证失败！数据可能被篡改'}
+              </div>
+              
+              <div className="mt-3 text-xs font-mono text-left space-y-1">
+                <div>
+                  <span className="text-gray-500">链上: </span>
+                  <span className="text-blue-400 break-all">{verification.onChainHash}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">计算: </span>
+                  <span className={`break-all ${isMatch ? 'text-green-400' : 'text-red-400'}`}>
+                    {computedHash}
+                  </span>
+                </div>
+              </div>
+            </motion.div>
           )}
         </div>
-      ) : (
-        <ThinkingAnimation />
       )}
-      
-      {/* 决策历史滚动 */}
-      <div className="mt-4 space-y-1 max-h-20 overflow-y-auto">
-        {history.slice(-5).map((h, i) => (
-          <div key={i} className="text-xs text-gray-500">
-            {h.agent}: {h.action} {h.amount && `$${h.amount}`}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
 
-function getActionEmoji(action: string) {
-  return {
-    fold: '❌',
-    check: '✋',
-    call: '📞',
-    raise: '⬆️',
-    'all-in': '🚀',
-  }[action] || '❓';
-}
-```
-
----
-
-## 6. 预测市场面板
-
-### 6.1 竞猜界面
-
-```tsx
-// components/SidePanel/PredictionPanel.tsx
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-
-export function PredictionPanel({ 
-  market, 
-  userBalance, 
-  onPlaceBet 
-}: PredictionMarketProps) {
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
-  const [betAmount, setBetAmount] = useState(10);
-  
+function StepIndicator({ label, status }: { label: string; status: 'pending' | 'loading' | 'done' }) {
   return (
-    <div className="bg-gradient-to-br from-indigo-900 to-purple-900 rounded-xl p-4">
-      <h3 className="text-white font-bold mb-2">🎯 预测市场</h3>
-      
-      <p className="text-gray-300 mb-4">{market.question}</p>
-      
-      {/* 选项列表 */}
-      <div className="space-y-2 mb-4">
-        {market.options.map((option) => (
-          <OddsOption
-            key={option.id}
-            option={option}
-            isSelected={selectedOption === option.id}
-            onClick={() => setSelectedOption(option.id)}
-          />
-        ))}
-      </div>
-      
-      {/* 下注控制 */}
-      {selectedOption && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          className="space-y-3"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-gray-400">下注金额:</span>
-            <input
-              type="number"
-              value={betAmount}
-              onChange={(e) => setBetAmount(Number(e.target.value))}
-              min={1}
-              max={userBalance}
-              className="w-20 bg-white/10 rounded px-2 py-1 text-white"
-            />
-            <span className="text-yellow-400">🪙 {userBalance}</span>
-          </div>
-          
-          {/* 快捷金额 */}
-          <div className="flex gap-2">
-            {[10, 50, 100, 'ALL'].map((amount) => (
-              <button
-                key={amount}
-                onClick={() => setBetAmount(
-                  amount === 'ALL' ? userBalance : amount as number
-                )}
-                className="px-2 py-1 bg-white/10 rounded text-sm hover:bg-white/20"
-              >
-                {amount}
-              </button>
-            ))}
-          </div>
-          
-          {/* 潜在收益 */}
-          <div className="text-green-400 text-sm">
-            潜在收益: {calculatePayout(betAmount, market, selectedOption)}
-          </div>
-          
-          <button
-            onClick={() => onPlaceBet(selectedOption, betAmount)}
-            disabled={betAmount > userBalance || betAmount <= 0}
-            className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-lg font-bold text-white disabled:opacity-50"
-          >
-            确认下注
-          </button>
-        </motion.div>
+    <div className="flex items-center gap-3 text-sm">
+      {status === 'pending' && <span className="text-gray-500">○</span>}
+      {status === 'loading' && (
+        <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}>
+          ◐
+        </motion.span>
       )}
-      
-      {/* 市场统计 */}
-      <div className="mt-4 flex justify-between text-xs text-gray-400">
-        <span>总投注池: {market.totalPool} 🪙</span>
-        <span>参与人数: {market.options.reduce((a, o) => a + o.betCount, 0)}</span>
-      </div>
+      {status === 'done' && <span className="text-green-400">✓</span>}
+      <span className={status === 'pending' ? 'text-gray-500' : 'text-white'}>{label}</span>
     </div>
   );
 }
 
-function OddsOption({ option, isSelected, onClick }: {
-  option: MarketOption;
-  isSelected: boolean;
-  onClick: () => void;
-}) {
-  const percentage = calculatePercentageWidth(option);
-  
-  return (
-    <motion.button
-      onClick={onClick}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      className={`
-        w-full p-3 rounded-lg relative overflow-hidden
-        ${isSelected 
-          ? 'bg-yellow-500/30 border-2 border-yellow-400' 
-          : 'bg-white/10 border-2 border-transparent hover:border-white/30'}
-      `}
-    >
-      {/* 投注比例背景 */}
-      <div 
-        className="absolute inset-0 bg-blue-500/20"
-        style={{ width: `${percentage}%` }}
-      />
-      
-      <div className="relative flex justify-between items-center">
-        <span className="text-white font-medium">{option.label}</span>
-        <div className="text-right">
-          <div className="text-xl font-bold text-yellow-400">
-            {option.odds.toFixed(2)}x
-          </div>
-          <div className="text-xs text-gray-400">
-            {option.betCount} 人投注
-          </div>
-        </div>
-      </div>
-    </motion.button>
-  );
-}
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 ```
 
 ---
 
-## 7. 状态管理
-
-### 7.1 Zustand Store
+## 6. 状态管理（Zustand）
 
 ```typescript
-// stores/gameStore.ts
+// stores/game.ts
 import { create } from 'zustand';
-import { subscribeWithSelector } from 'zustand/middleware';
 
-interface GameStore {
+interface Player {
+  id: string;
+  name: string;
+  avatar: string;
+  holeCards: [string, string];
+  stack: number;
+  status: 'active' | 'allin' | 'folded' | 'eliminated';
+}
+
+interface DialogueMessage {
+  name: string;
+  avatar: string;
+  speech: string;
+  emotion: string;
+  target?: string;
+}
+
+interface VerificationData {
+  gameId: string;
+  ipfsCid: string;
+  onChainHash: string;
+  explorerUrl: string;
+  txHash: string;
+}
+
+interface GameState {
   // 游戏状态
-  gameState: GameState | null;
-  isConnected: boolean;
+  gameId: string | null;
+  phase: 'waiting' | 'playing' | 'showdown' | 'ended';
+  round: number;
+  players: Player[];
+  communityCards: string[];
+  pot: number;
+  activePlayerId: string | null;
   
-  // AI 决策
-  currentDecision: AIDecision | null;
-  decisionHistory: AIDecision[];
+  // 对话
+  dialogue: DialogueMessage[];
+  typingAgent: { name: string; avatar: string } | null;
+  typingText: string;
   
-  // 预测市场
-  activeMarket: PredictionMarket | null;
-  userBets: Bet[];
-  
-  // 用户
-  userBalance: number;
+  // 验证
+  verification: VerificationData | null;
   
   // Actions
-  setGameState: (state: GameState) => void;
-  setCurrentDecision: (decision: AIDecision | null) => void;
-  addToHistory: (decision: AIDecision) => void;
-  updateMarket: (market: PredictionMarket) => void;
-  setUserBalance: (balance: number) => void;
-  addUserBet: (bet: Bet) => void;
+  setGameState: (state: Partial<GameState>) => void;
+  addDialogue: (msg: DialogueMessage) => void;
+  setTyping: (agent: { name: string; avatar: string } | null, text?: string) => void;
+  appendTypingText: (chunk: string) => void;
+  setVerification: (data: VerificationData) => void;
   reset: () => void;
 }
 
-export const useGameStore = create<GameStore>()(
-  subscribeWithSelector((set, get) => ({
-    gameState: null,
-    isConnected: false,
-    currentDecision: null,
-    decisionHistory: [],
-    activeMarket: null,
-    userBets: [],
-    userBalance: 0,
-    
-    setGameState: (gameState) => set({ gameState }),
-    
-    setCurrentDecision: (currentDecision) => set({ currentDecision }),
-    
-    addToHistory: (decision) => set((state) => ({
-      decisionHistory: [...state.decisionHistory, decision].slice(-50)
-    })),
-    
-    updateMarket: (activeMarket) => set({ activeMarket }),
-    
-    setUserBalance: (userBalance) => set({ userBalance }),
-    
-    addUserBet: (bet) => set((state) => ({
-      userBets: [...state.userBets, bet]
-    })),
-    
-    reset: () => set({
-      gameState: null,
-      currentDecision: null,
-      decisionHistory: [],
-      userBets: []
-    })
-  }))
-);
+export const useGameStore = create<GameState>((set, get) => ({
+  gameId: null,
+  phase: 'waiting',
+  round: 1,
+  players: [],
+  communityCards: [],
+  pot: 0,
+  activePlayerId: null,
+  dialogue: [],
+  typingAgent: null,
+  typingText: '',
+  verification: null,
+  
+  setGameState: (state) => set(state),
+  
+  addDialogue: (msg) => set(s => ({
+    dialogue: [...s.dialogue.slice(-20), msg]  // 保留最近20条
+  })),
+  
+  setTyping: (agent, text = '') => set({ typingAgent: agent, typingText: text }),
+  
+  appendTypingText: (chunk) => set(s => ({
+    typingText: s.typingText + chunk
+  })),
+  
+  setVerification: (data) => set({ verification: data }),
+  
+  reset: () => set({
+    gameId: null,
+    phase: 'waiting',
+    round: 1,
+    players: [],
+    communityCards: [],
+    pot: 0,
+    activePlayerId: null,
+    dialogue: [],
+    typingAgent: null,
+    typingText: '',
+    verification: null,
+  }),
+}));
 ```
 
-### 7.2 WebSocket 集成
+---
+
+## 7. Socket.io 集成
 
 ```typescript
-// hooks/useGameSocket.ts
-import { useEffect, useRef } from 'react';
+// lib/socket.ts
 import { io, Socket } from 'socket.io-client';
-import { useGameStore } from '../stores/gameStore';
+import { useGameStore } from '@/stores/game';
 
-export function useGameSocket(gameId: string) {
-  const socketRef = useRef<Socket | null>(null);
-  const { 
-    setGameState, 
-    setCurrentDecision, 
-    addToHistory,
-    updateMarket,
-    setUserBalance 
-  } = useGameStore();
+let socket: Socket;
+
+export function initSocket(serverUrl: string) {
+  socket = io(serverUrl);
   
-  useEffect(() => {
-    const socket = io(import.meta.env.VITE_WS_URL);
-    socketRef.current = socket;
-    
-    socket.on('connect', () => {
-      socket.emit('join_game', { gameId });
-    });
-    
-    // 游戏状态更新
-    socket.on('game_state', (state: GameState) => {
-      setGameState(state);
-    });
-    
-    // AI 决策
-    socket.on('ai_thinking', ({ agentId }) => {
-      setCurrentDecision(null); // 清除显示思考动画
-    });
-    
-    socket.on('ai_decision', (decision: AIDecision) => {
-      setCurrentDecision(decision);
-      addToHistory(decision);
-      
-      // 3秒后清除当前决策显示
-      setTimeout(() => setCurrentDecision(null), 3000);
-    });
-    
-    // 预测市场更新
-    socket.on('odds_update', (market: PredictionMarket) => {
-      updateMarket(market);
-    });
-    
-    socket.on('market_resolved', ({ marketId, result, userPayout }) => {
-      // 显示结算动画
-      showSettlementAnimation(result, userPayout);
-    });
-    
-    // 余额更新
-    socket.on('balance_update', ({ balance }) => {
-      setUserBalance(balance);
-    });
-    
-    return () => {
-      socket.disconnect();
-    };
-  }, [gameId]);
+  // 游戏状态更新
+  socket.on('game_state', (state) => {
+    useGameStore.getState().setGameState(state);
+  });
   
-  const placeBet = (optionId: string, amount: number) => {
-    socketRef.current?.emit('place_bet', { optionId, amount });
-  };
+  // AI开始思考
+  socket.on('ai_thinking', (data) => {
+    useGameStore.getState().setTyping({
+      name: data.agentName,
+      avatar: data.avatar
+    });
+  });
   
-  return { placeBet };
+  // AI对话流式输出
+  socket.on('ai_speech_chunk', (data) => {
+    useGameStore.getState().appendTypingText(data.chunk);
+  });
+  
+  // AI决策完成
+  socket.on('ai_decision', (data) => {
+    const store = useGameStore.getState();
+    
+    // 完成打字
+    store.setTyping(null);
+    
+    // 添加完整消息
+    store.addDialogue({
+      name: data.agentName,
+      avatar: data.avatar,
+      speech: data.speech,
+      emotion: data.emotion,
+      target: data.target
+    });
+  });
+  
+  // 链上验证完成
+  socket.on('game_committed', (data) => {
+    useGameStore.getState().setVerification(data);
+  });
+  
+  return socket;
+}
+
+export function joinGame(gameId: string) {
+  socket.emit('join_game', gameId);
+}
+
+export function placeBet(gameId: string, aiId: string, amount: number) {
+  socket.emit('place_bet', { gameId, aiId, amount });
 }
 ```
 
 ---
 
-## 8. 动画效果
-
-### 8.1 筹码动画
-
-```tsx
-// components/Animations/ChipAnimation.tsx
-import { motion } from 'framer-motion';
-
-export function ChipFlyAnimation({ 
-  from, 
-  to, 
-  amount,
-  onComplete 
-}: ChipAnimationProps) {
-  return (
-    <motion.div
-      initial={{ x: from.x, y: from.y, scale: 1 }}
-      animate={{ x: to.x, y: to.y, scale: 0.5 }}
-      transition={{ duration: 0.5, ease: 'easeOut' }}
-      onAnimationComplete={onComplete}
-      className="fixed z-50 pointer-events-none"
-    >
-      <div className="relative">
-        {/* 筹码堆 */}
-        {[...Array(Math.min(5, Math.ceil(amount / 100)))].map((_, i) => (
-          <motion.div
-            key={i}
-            initial={{ y: 0 }}
-            animate={{ y: i * -4 }}
-            className={`
-              w-10 h-10 rounded-full absolute
-              bg-gradient-to-r from-red-600 to-red-700
-              border-4 border-white/20
-              shadow-lg
-            `}
-            style={{ top: i * -2 }}
-          >
-            <div className="absolute inset-0 flex items-center justify-center text-white font-bold text-xs">
-              $
-            </div>
-          </motion.div>
-        ))}
-      </div>
-      
-      {/* 金额标签 */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-black/70 px-2 py-1 rounded text-yellow-400 text-sm font-bold whitespace-nowrap"
-      >
-        ${amount}
-      </motion.div>
-    </motion.div>
-  );
-}
-```
-
-### 8.2 翻牌动画
-
-```tsx
-// components/Animations/CardReveal.tsx
-
-export function CardRevealAnimation({ 
-  cards, 
-  phase 
-}: { cards: Card[]; phase: GamePhase }) {
-  const revealSequence = {
-    flop: [0, 1, 2],
-    turn: [3],
-    river: [4],
-  };
-  
-  const indices = revealSequence[phase as keyof typeof revealSequence] || [];
-  
-  return (
-    <>
-      {indices.map((index, i) => (
-        <motion.div
-          key={index}
-          initial={{ 
-            rotateY: 180, 
-            scale: 0.5, 
-            y: -100,
-            opacity: 0 
-          }}
-          animate={{ 
-            rotateY: 0, 
-            scale: 1, 
-            y: 0,
-            opacity: 1 
-          }}
-          transition={{ 
-            duration: 0.6, 
-            delay: i * 0.3,
-            type: 'spring',
-            stiffness: 200
-          }}
-        >
-          <Card card={cards[index]} />
-        </motion.div>
-      ))}
-    </>
-  );
-}
-```
-
-### 8.3 胜利动画
-
-```tsx
-// components/Animations/WinnerCelebration.tsx
-
-export function WinnerCelebration({ winner, amount }: { 
-  winner: Player; 
-  amount: number;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-    >
-      {/* 烟花粒子 */}
-      <Confetti
-        width={window.innerWidth}
-        height={window.innerHeight}
-        recycle={false}
-        numberOfPieces={200}
-      />
-      
-      <motion.div
-        initial={{ scale: 0.5, y: 50 }}
-        animate={{ scale: 1, y: 0 }}
-        transition={{ type: 'spring', stiffness: 300 }}
-        className="bg-gradient-to-r from-yellow-500 to-amber-600 rounded-2xl p-8 text-center shadow-2xl"
-      >
-        <motion.div
-          animate={{ scale: [1, 1.2, 1] }}
-          transition={{ repeat: Infinity, duration: 1 }}
-          className="text-6xl mb-4"
-        >
-          🏆
-        </motion.div>
-        
-        <h2 className="text-3xl font-bold text-white mb-2">
-          {winner.avatar} {winner.name} 获胜!
-        </h2>
-        
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="text-5xl font-bold text-white"
-        >
-          +${amount}
-        </motion.div>
-      </motion.div>
-    </motion.div>
-  );
-}
-```
-
----
-
-## 9. 目录结构
+## 8. 目录结构
 
 ```
 src/
 ├── components/
-│   ├── PokerTable/
-│   │   ├── index.tsx
-│   │   ├── Card.tsx
-│   │   ├── CommunityCards.tsx
+│   ├── Table/
+│   │   ├── PokerTable.tsx
 │   │   ├── PlayerSeat.tsx
-│   │   ├── ChipStack.tsx
-│   │   ├── PotDisplay.tsx
-│   │   └── DealerButton.tsx
-│   ├── AIThoughts/
-│   │   ├── ThinkingBubble.tsx
-│   │   ├── AIThoughtsPanel.tsx
-│   │   └── ConfidenceMeter.tsx
-│   ├── Prediction/
-│   │   ├── PredictionPanel.tsx
-│   │   ├── OddsOption.tsx
-│   │   └── BetControls.tsx
-│   ├── Animations/
-│   │   ├── ChipAnimation.tsx
-│   │   ├── CardReveal.tsx
-│   │   └── WinnerCelebration.tsx
-│   ├── Layout/
-│   │   ├── Header.tsx
-│   │   ├── Footer.tsx
-│   │   └── SidePanel.tsx
-│   └── common/
-│       ├── Button.tsx
-│       └── Modal.tsx
-├── pages/
-│   ├── Home.tsx
-│   ├── GameRoom.tsx
-│   ├── History.tsx
-│   └── Verify.tsx
+│   │   ├── PlayingCard.tsx
+│   │   ├── CommunityCards.tsx
+│   │   └── PotDisplay.tsx
+│   ├── Dialogue/
+│   │   ├── DialogueStream.tsx
+│   │   └── SpeechBubble.tsx
+│   ├── Market/
+│   │   ├── BettingPanel.tsx
+│   │   └── LiveBetFeed.tsx
+│   ├── Verify/
+│   │   ├── VerificationBar.tsx
+│   │   └── VerificationPanel.tsx
+│   └── Layout/
+│       ├── Header.tsx
+│       └── GameRoom.tsx
 ├── stores/
-│   └── gameStore.ts
-├── hooks/
-│   ├── useGameSocket.ts
-│   └── useAnimations.ts
-├── utils/
-│   ├── cardHelpers.ts
-│   └── formatters.ts
-├── styles/
-│   └── globals.css
-├── App.tsx
-└── main.tsx
+│   └── game.ts
+├── lib/
+│   └── socket.ts
+├── pages/
+│   ├── index.tsx         # 首页/大厅
+│   └── game/[id].tsx     # 游戏房间
+└── styles/
+    └── globals.css
 ```
 
 ---
 
-## 10. 开发计划
+## 9. 开发计划
 
-| 任务 | 预计时间 | 优先级 |
-|------|----------|--------|
-| 项目脚手架搭建 | 1h | P0 |
-| 扑克牌桌基础组件 | 4h | P0 |
-| 扑克牌组件 + 翻牌动画 | 2h | P0 |
-| 玩家座位组件 | 3h | P0 |
-| AI 思考展示 | 3h | P0 |
-| 预测市场面板 | 3h | P1 |
-| WebSocket 集成 | 2h | P1 |
-| 筹码/胜利动画 | 2h | P1 |
-| 响应式布局 | 2h | P2 |
-| 游戏回放功能 | 3h | P2 |
+| 任务 | 时间 | 优先级 |
+|------|------|--------|
+| PokerTable + PlayerSeat | 3h | P0 |
+| PlayingCard + 动画 | 2h | P0 |
+| DialogueStream 打字机 | 2h | P0 |
+| VerificationPanel | 2h | P0 |
+| BettingPanel | 2h | P1 |
+| Socket.io 集成 | 1h | P0 |
 
-**总计**: 约 25 小时（3个工作日）
+**总计**: 12h
 
 ---
 
-## 11. 性能优化
+## 10. 演示话术
 
-1. **组件记忆化**：使用 `React.memo` 避免无关重渲染
-2. **动画节流**：使用 `requestAnimationFrame` 控制动画帧率
-3. **懒加载**：历史记录页面使用 `React.lazy` 懒加载
-4. **WebSocket 节流**：合并高频更新，批量推送
-5. **图片优化**：使用 WebP 格式，预加载关键资源
+> "这是我们的观战界面——ESPN式的'上帝视角'。
+>
+> 你可以看到每个AI的底牌：火焰拿着A♠ K♥，冰山是一对Q...
+>
+> **[指向对话区]**
+> 这里是AI之间的实时对话。注意看，火焰正在打字...
+>
+> '@ 冰山 又缩了？' —— 每条消息都是流式输出的，像真人在打字。
+>
+> **[指向验证栏]**
+> 游戏结束后，所有数据会被上传到IPFS，哈希值写入Monad链。
+>
+> 点击'Verify'按钮，我们可以现场演示验证流程——
+> 从IPFS下载数据，本地计算哈希，与链上比对...
+>
+> ✅ 验证通过！这证明了AI决策过程的不可篡改性。"

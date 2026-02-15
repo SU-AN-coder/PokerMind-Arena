@@ -1,854 +1,664 @@
-# 模块四：预测市场系统
+# 模块四：预测市场系统（最终版）
+
+> **状态**: 最终版 v2.0 | **优先级**: P1 | **预计时间**: 8h
+
+## 🎯 核心简化：彩池制 + 模拟观众
+
+### 为什么简化？
+
+| 原方案 | 问题 | 新方案 |
+|--------|------|--------|
+| 动态赔率计算 | 实现复杂、需要做市商逻辑 | **彩池制(Parimutuel)** - 所有赌注平分 |
+| 真实用户系统 | 没有真实用户测试数据 | **模拟观众系统** - 自动生成投注 |
+| PostgreSQL + Redis | 杀鸡用牛刀 | **内存状态** - 演示够用 |
+| Arcade Token | 太复杂 | **虚拟积分** - 展示用 |
+
+---
 
 ## 1. 模块概述
 
-预测市场模块允许观众对 AI 扑克对战结果进行预测和竞猜，通过 Arcade Token 机制实现免 Gas 的参与体验。
-
 ### 1.1 核心职责
-- 管理预测市场的创建与结算
-- 计算动态赔率
-- 处理用户投注与结算
-- Arcade Token 的发放与消耗
+- 提供简单的"谁会赢"预测投票
+- **彩池制结算**：赢家平分输家的筹码
+- **模拟观众**：自动生成虚假投注数据
+- 展示"众人皆赌"的氛围
 
 ### 1.2 技术选型
 | 组件 | 选择 | 理由 |
 |------|------|------|
-| 后端框架 | Node.js + Fastify | 高性能、低开销 |
-| 实时通信 | Socket.io | 双向实时更新 |
-| Token 管理 | Redis + PostgreSQL | 高并发 + 持久化 |
-| 赔率计算 | 内存计算 | 毫秒级响应 |
-
-### 1.3 设计原则
-- **免 Gas 体验**：链下积分系统，链上可选结算
-- **动态赔率**：根据投注分布实时调整
-- **公平性**：游戏开始后锁定投注，结果由链上数据决定
+| 后端 | 内存 Map | 无需数据库 |
+| 结算 | 彩池制 | 公式简单 |
+| 观众 | 模拟生成 | 数据好看 |
 
 ---
 
-## 2. 市场类型设计
+## 2. 彩池制（Parimutuel）原理
 
-### 2.1 市场类型枚举
-
-```typescript
-enum MarketType {
-  // 游戏级别市场
-  GAME_WINNER = 'game_winner',           // 谁会赢得本局
-  FIRST_ELIMINATION = 'first_out',        // 谁先被淘汰
-  LAST_SURVIVOR = 'last_survivor',        // 最后存活者
-  
-  // 阶段级别市场
-  ROUND_WINNER = 'round_winner',          // 本回合谁赢
-  BIGGEST_POT = 'biggest_pot',            // 最大底池出现在哪个阶段
-  
-  // 行为预测市场
-  WILL_BLUFF = 'will_bluff',              // 某 AI 会诈唬吗
-  WILL_ALL_IN = 'will_all_in',            // 本局会有全押吗
-  SHOWDOWN_COUNT = 'showdown_count',      // 摊牌次数预测
-}
+```
+     所有人下注
+          │
+          ▼
+    ┌─────────────┐
+    │   总奖池     │
+    │  $1000      │
+    └──────┬──────┘
+           │
+    扣除平台费 5%
+           │
+           ▼
+    ┌─────────────┐
+    │  净奖池      │
+    │  $950       │
+    └──────┬──────┘
+           │
+    ┌──────┴──────┐
+    │             │
+    ▼             ▼
+赢家按投注比例瓜分   输家失去全部
+    
+例：净池950，赢家池300
+赔率 = 950 / 300 = 3.17
+押10块赢 31.7
 ```
 
-### 2.2 市场数据结构
+### 2.1 彩池制核心公式
+
+```typescript
+/**
+ * 彩池制赔率计算
+ * @param totalPool 总投注池
+ * @param winnerPool 获胜选项的投注总额
+ * @param platformFee 平台抽成（默认5%）
+ * @returns 赔率
+ */
+function calculatePayoutOdds(
+  totalPool: number,
+  winnerPool: number,
+  platformFee: number = 0.05
+): number {
+  if (winnerPool === 0) return 0;  // 无人下注该选项
+  const netPool = totalPool * (1 - platformFee);
+  return netPool / winnerPool;
+}
+
+// 示例
+// 总池1000，火焰池300，冰山池400，诡影池200，逻辑池100
+// 火焰赢：赔率 = 950 / 300 = 3.17
+// 押火焰100 → 赢317
+```
+
+---
+
+## 3. 数据结构
+
+### 3.1 预测市场
 
 ```typescript
 interface PredictionMarket {
-  id: string;
   gameId: string;
-  type: MarketType;
-  question: string;                // "谁会赢得本局比赛？"
-  options: MarketOption[];
-  status: MarketStatus;
+  question: string;           // "谁会赢得这场比赛？"
+  status: 'open' | 'locked' | 'resolved';
   
-  totalPool: number;               // 总投注池
-  createdAt: number;
-  closesAt: number;                // 投注截止时间
-  resolvedAt?: number;
-  result?: string;                 // 结果选项 ID
-}
-
-interface MarketOption {
-  id: string;
-  label: string;                   // "🔥 火焰王者"
-  totalBets: number;               // 该选项总投注
-  odds: number;                    // 当前赔率
-  betCount: number;                // 投注人数
-}
-
-enum MarketStatus {
-  OPEN = 'open',                   // 接受投注
-  LOCKED = 'locked',               // 游戏进行中，停止投注
-  RESOLVED = 'resolved',           // 已结算
-  CANCELLED = 'cancelled'          // 已取消
-}
-```
-
----
-
-## 3. Arcade Token 系统
-
-### 3.1 Token 设计
-
-```typescript
-interface ArcadeToken {
-  symbol: string;                  // "CHIP"
-  name: string;                    // "Arena Chip"
-  decimals: number;                // 0 (整数)
-  
-  // 获取方式
-  dailyFreeAmount: number;         // 每日免费领取量: 100
-  watchBonusAmount: number;        // 观看完整比赛奖励: 10
-  correctPredictionMultiplier: number; // 预测正确额外奖励倍数: 1.1x
-}
-
-interface UserTokenAccount {
-  userId: string;
-  balance: number;
-  totalEarned: number;
-  totalSpent: number;
-  lastDailyClaim: number;          // 上次领取每日奖励时间
-  
-  // 可选链上绑定
-  walletAddress?: string;
-  onChainBalance?: number;
-}
-```
-
-### 3.2 Token 服务实现
-
-```typescript
-class ArcadeTokenService {
-  private redis: Redis;
-  private db: PostgresPool;
-  
-  // ============ 余额操作 ============
-  
-  async getBalance(userId: string): Promise<number> {
-    const cached = await this.redis.get(`balance:${userId}`);
-    if (cached !== null) return parseInt(cached);
-    
-    const result = await this.db.query(
-      'SELECT balance FROM user_tokens WHERE user_id = $1',
-      [userId]
-    );
-    const balance = result.rows[0]?.balance || 0;
-    await this.redis.setex(`balance:${userId}`, 300, balance.toString());
-    return balance;
-  }
-  
-  async addTokens(userId: string, amount: number, reason: string): Promise<number> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      
-      const result = await client.query(
-        `INSERT INTO user_tokens (user_id, balance, total_earned)
-         VALUES ($1, $2, $2)
-         ON CONFLICT (user_id) 
-         DO UPDATE SET balance = user_tokens.balance + $2,
-                       total_earned = user_tokens.total_earned + $2
-         RETURNING balance`,
-        [userId, amount]
-      );
-      
-      await client.query(
-        `INSERT INTO token_transactions (user_id, amount, type, reason, created_at)
-         VALUES ($1, $2, 'credit', $3, NOW())`,
-        [userId, amount, reason]
-      );
-      
-      await client.query('COMMIT');
-      
-      const newBalance = result.rows[0].balance;
-      await this.redis.set(`balance:${userId}`, newBalance.toString());
-      return newBalance;
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-  
-  async deductTokens(userId: string, amount: number, reason: string): Promise<boolean> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      
-      const result = await client.query(
-        `UPDATE user_tokens 
-         SET balance = balance - $2, total_spent = total_spent + $2
-         WHERE user_id = $1 AND balance >= $2
-         RETURNING balance`,
-        [userId, amount]
-      );
-      
-      if (result.rowCount === 0) {
-        await client.query('ROLLBACK');
-        return false;
-      }
-      
-      await client.query(
-        `INSERT INTO token_transactions (user_id, amount, type, reason, created_at)
-         VALUES ($1, $2, 'debit', $3, NOW())`,
-        [userId, amount, reason]
-      );
-      
-      await client.query('COMMIT');
-      
-      await this.redis.set(`balance:${userId}`, result.rows[0].balance.toString());
-      return true;
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-  
-  // ============ 每日奖励 ============
-  
-  async claimDailyReward(userId: string): Promise<ClaimResult> {
-    const lastClaim = await this.redis.get(`daily:${userId}`);
-    const today = new Date().toDateString();
-    
-    if (lastClaim === today) {
-      return { success: false, reason: 'Already claimed today' };
-    }
-    
-    const newBalance = await this.addTokens(userId, 100, 'daily_reward');
-    await this.redis.setex(`daily:${userId}`, 86400, today);
-    
-    return { success: true, amount: 100, newBalance };
-  }
-}
-```
-
----
-
-## 4. 赔率计算系统
-
-### 4.1 赔率算法
-
-```typescript
-class OddsCalculator {
-  private readonly HOUSE_EDGE = 0.05;  // 5% 平台抽成
-  private readonly MIN_ODDS = 1.01;     // 最低赔率
-  private readonly MAX_ODDS = 100;      // 最高赔率
-  
-  /**
-   * 基于投注分布计算赔率 (Pari-mutuel 模式)
-   */
-  calculateOdds(market: PredictionMarket): Map<string, number> {
-    const totalPool = market.totalPool * (1 - this.HOUSE_EDGE);
-    const odds = new Map<string, number>();
-    
-    for (const option of market.options) {
-      if (option.totalBets === 0) {
-        odds.set(option.id, this.MAX_ODDS);
-      } else {
-        const rawOdds = totalPool / option.totalBets;
-        const clampedOdds = Math.max(this.MIN_ODDS, Math.min(this.MAX_ODDS, rawOdds));
-        odds.set(option.id, Math.round(clampedOdds * 100) / 100);
-      }
-    }
-    
-    return odds;
-  }
-  
-  /**
-   * 计算隐含概率
-   */
-  calculateImpliedProbability(odds: number): number {
-    return 1 / odds;
-  }
-  
-  /**
-   * 预估回报
-   */
-  estimatePayout(betAmount: number, odds: number): number {
-    return betAmount * odds;
-  }
-  
-  /**
-   * 模拟新投注后的赔率变化
-   */
-  simulateOddsAfterBet(
-    market: PredictionMarket,
-    optionId: string,
-    betAmount: number
-  ): Map<string, number> {
-    // 创建模拟市场
-    const simMarket = JSON.parse(JSON.stringify(market));
-    simMarket.totalPool += betAmount;
-    
-    const option = simMarket.options.find((o: any) => o.id === optionId);
-    if (option) option.totalBets += betAmount;
-    
-    return this.calculateOdds(simMarket);
-  }
-}
-```
-
-### 4.2 赔率实时更新
-
-```typescript
-class OddsUpdateService {
-  private io: Server;
-  private calculator: OddsCalculator;
-  
-  constructor(io: Server) {
-    this.io = io;
-    this.calculator = new OddsCalculator();
-  }
-  
-  /**
-   * 广播赔率更新
-   */
-  broadcastOddsUpdate(market: PredictionMarket): void {
-    const odds = this.calculator.calculateOdds(market);
-    
-    const update: OddsUpdate = {
-      marketId: market.id,
-      timestamp: Date.now(),
-      options: market.options.map(opt => ({
-        id: opt.id,
-        label: opt.label,
-        odds: odds.get(opt.id)!,
-        totalBets: opt.totalBets,
-        betCount: opt.betCount,
-        impliedProbability: this.calculator.calculateImpliedProbability(odds.get(opt.id)!)
-      })),
-      totalPool: market.totalPool
-    };
-    
-    this.io.to(`market:${market.id}`).emit('odds_update', update);
-  }
-}
-
-interface OddsUpdate {
-  marketId: string;
-  timestamp: number;
   options: {
-    id: string;
-    label: string;
-    odds: number;
-    totalBets: number;
-    betCount: number;
-    impliedProbability: number;
+    aiId: string;
+    aiName: string;
+    avatar: string;
+    totalBets: number;        // 该选项总投注
+    betCount: number;         // 投注人数（含模拟）
   }[];
-  totalPool: number;
+  
+  totalPool: number;          // 总池
+  closedAt?: number;          // 锁定时间
+  winnerId?: string;          // 获胜AI
+}
+
+interface UserBet {
+  oduserId: string;
+  optionId: string;           // AI ID
+  amount: number;
+  placedAt: number;
 }
 ```
 
----
-
-## 5. 投注与结算服务
-
-### 5.1 投注服务
+### 3.2 市场管理器
 
 ```typescript
-interface PlaceBetRequest {
-  userId: string;
-  marketId: string;
-  optionId: string;
-  amount: number;
-}
-
-interface BetResult {
-  success: boolean;
-  betId?: string;
-  lockedOdds?: number;
-  potentialPayout?: number;
-  error?: string;
-}
-
-class BettingService {
-  private tokenService: ArcadeTokenService;
-  private marketRepo: MarketRepository;
-  private betRepo: BetRepository;
-  private oddsService: OddsUpdateService;
+class MarketManager {
+  private markets: Map<string, PredictionMarket> = new Map();
+  private bets: Map<string, UserBet[]> = new Map();  // gameId -> bets
   
-  async placeBet(request: PlaceBetRequest): Promise<BetResult> {
-    // 1. 验证市场状态
-    const market = await this.marketRepo.getById(request.marketId);
-    if (!market) return { success: false, error: 'Market not found' };
-    if (market.status !== MarketStatus.OPEN) {
-      return { success: false, error: 'Market is closed for betting' };
-    }
-    
-    // 2. 验证选项
-    const option = market.options.find(o => o.id === request.optionId);
-    if (!option) return { success: false, error: 'Invalid option' };
-    
-    // 3. 验证并扣除余额
-    const deducted = await this.tokenService.deductTokens(
-      request.userId,
-      request.amount,
-      `bet_${request.marketId}`
-    );
-    if (!deducted) return { success: false, error: 'Insufficient balance' };
-    
-    // 4. 计算当前赔率
-    const currentOdds = new OddsCalculator().calculateOdds(market);
-    const lockedOdds = currentOdds.get(request.optionId)!;
-    
-    // 5. 创建投注记录
-    const bet: Bet = {
-      id: uuidv4(),
-      userId: request.userId,
-      marketId: request.marketId,
-      optionId: request.optionId,
-      amount: request.amount,
-      lockedOdds,
-      potentialPayout: request.amount * lockedOdds,
-      status: 'pending',
-      createdAt: Date.now()
+  /**
+   * 创建新市场
+   */
+  createMarket(gameId: string, players: { id: string; name: string; avatar: string }[]): PredictionMarket {
+    const market: PredictionMarket = {
+      gameId,
+      question: '谁会赢得这场AI扑克大战？',
+      status: 'open',
+      options: players.map(p => ({
+        aiId: p.id,
+        aiName: p.name,
+        avatar: p.avatar,
+        totalBets: 0,
+        betCount: 0
+      })),
+      totalPool: 0
     };
     
-    await this.betRepo.create(bet);
+    this.markets.set(gameId, market);
+    this.bets.set(gameId, []);
     
-    // 6. 更新市场统计
-    await this.marketRepo.addBet(request.marketId, request.optionId, request.amount);
+    // 🔑 关键：立即生成模拟投注
+    this.generateSimulatedBets(gameId);
     
-    // 7. 广播赔率更新
-    const updatedMarket = await this.marketRepo.getById(request.marketId);
-    this.oddsService.broadcastOddsUpdate(updatedMarket!);
-    
-    return {
-      success: true,
-      betId: bet.id,
-      lockedOdds,
-      potentialPayout: bet.potentialPayout
-    };
+    return market;
   }
   
-  async cancelBet(betId: string, userId: string): Promise<boolean> {
-    const bet = await this.betRepo.getById(betId);
-    if (!bet || bet.userId !== userId || bet.status !== 'pending') {
-      return false;
-    }
+  /**
+   * 用户下注
+   */
+  placeBet(gameId: string, userId: string, aiId: string, amount: number): boolean {
+    const market = this.markets.get(gameId);
+    if (!market || market.status !== 'open') return false;
     
-    const market = await this.marketRepo.getById(bet.marketId);
-    if (market?.status !== MarketStatus.OPEN) {
-      return false; // 市场已锁定，不能取消
-    }
+    const option = market.options.find(o => o.aiId === aiId);
+    if (!option) return false;
     
-    // 退还 Token
-    await this.tokenService.addTokens(userId, bet.amount, `refund_${betId}`);
-    await this.betRepo.updateStatus(betId, 'cancelled');
-    await this.marketRepo.removeBet(bet.marketId, bet.optionId, bet.amount);
+    // 更新市场数据
+    option.totalBets += amount;
+    option.betCount += 1;
+    market.totalPool += amount;
+    
+    // 记录投注
+    this.bets.get(gameId)!.push({
+      userId,
+      optionId: aiId,
+      amount,
+      placedAt: Date.now()
+    });
     
     return true;
   }
-}
-
-interface Bet {
-  id: string;
-  userId: string;
-  marketId: string;
-  optionId: string;
-  amount: number;
-  lockedOdds: number;
-  potentialPayout: number;
-  status: 'pending' | 'won' | 'lost' | 'cancelled' | 'refunded';
-  createdAt: number;
-  settledAt?: number;
-  payout?: number;
-}
-```
-
-### 5.2 结算服务
-
-```typescript
-class SettlementService {
-  private tokenService: ArcadeTokenService;
-  private marketRepo: MarketRepository;
-  private betRepo: BetRepository;
+  
+  /**
+   * 锁定市场（游戏开始）
+   */
+  lockMarket(gameId: string): void {
+    const market = this.markets.get(gameId);
+    if (market) {
+      market.status = 'locked';
+      market.closedAt = Date.now();
+    }
+  }
   
   /**
    * 结算市场
    */
-  async settleMarket(marketId: string, winningOptionId: string): Promise<SettlementReport> {
-    const market = await this.marketRepo.getById(marketId);
-    if (!market || market.status === MarketStatus.RESOLVED) {
-      throw new Error('Invalid market or already resolved');
-    }
+  resolveMarket(gameId: string, winnerId: string): SettlementResult {
+    const market = this.markets.get(gameId);
+    if (!market) throw new Error('Market not found');
     
-    // 1. 锁定市场
-    await this.marketRepo.updateStatus(marketId, MarketStatus.RESOLVED);
-    await this.marketRepo.setResult(marketId, winningOptionId);
+    market.status = 'resolved';
+    market.winnerId = winnerId;
     
-    // 2. 获取所有投注
-    const allBets = await this.betRepo.getByMarketId(marketId);
+    const winnerOption = market.options.find(o => o.aiId === winnerId)!;
+    const odds = calculatePayoutOdds(market.totalPool, winnerOption.totalBets);
     
-    // 3. 分批处理结算
-    const report: SettlementReport = {
-      marketId,
-      winningOption: winningOptionId,
-      totalBets: allBets.length,
-      totalPool: market.totalPool,
-      winnersCount: 0,
-      totalPayout: 0,
-      houseTake: 0
-    };
+    // 计算每个用户的收益
+    const bets = this.bets.get(gameId) || [];
+    const results: { userId: string; betAmount: number; payout: number }[] = [];
     
-    for (const bet of allBets) {
-      if (bet.optionId === winningOptionId) {
-        // 赢家
-        const payout = bet.potentialPayout;
-        await this.tokenService.addTokens(
-          bet.userId,
-          payout,
-          `win_${marketId}`
-        );
-        await this.betRepo.settle(bet.id, 'won', payout);
-        
-        report.winnersCount++;
-        report.totalPayout += payout;
+    for (const bet of bets) {
+      if (bet.optionId === winnerId) {
+        const payout = bet.amount * odds;
+        results.push({ userId: bet.userId, betAmount: bet.amount, payout });
       } else {
-        // 输家
-        await this.betRepo.settle(bet.id, 'lost', 0);
+        results.push({ userId: bet.userId, betAmount: bet.amount, payout: 0 });
       }
     }
     
-    // 4. 计算平台收入
-    report.houseTake = market.totalPool - report.totalPayout;
+    return {
+      winnerId,
+      winnerName: winnerOption.aiName,
+      odds,
+      totalPool: market.totalPool,
+      winnerPool: winnerOption.totalBets,
+      results
+    };
+  }
+}
+
+interface SettlementResult {
+  winnerId: string;
+  winnerName: string;
+  odds: number;
+  totalPool: number;
+  winnerPool: number;
+  results: { userId: string; betAmount: number; payout: number }[];
+}
+```
+
+---
+
+## 4. 模拟观众系统 🆕
+
+### 4.1 为什么需要模拟观众？
+
+> **问题**：演示时没有真实用户，预测市场看起来冷清  
+> **解决**：自动生成模拟投注，让市场数据"好看"
+
+### 4.2 模拟策略
+
+```typescript
+interface SimulatedBetConfig {
+  minBettors: number;        // 最少模拟人数: 20
+  maxBettors: number;        // 最多模拟人数: 50
+  minBetAmount: number;      // 最小投注: 10
+  maxBetAmount: number;      // 最大投注: 100
+  
+  // 热门偏向（让某个AI更被看好）
+  favoredBias: number;       // 0.3 = 热门选项获得30%额外投注
+}
+
+class SimulatedAudienceGenerator {
+  private config: SimulatedBetConfig = {
+    minBettors: 20,
+    maxBettors: 50,
+    minBetAmount: 10,
+    maxBetAmount: 100,
+    favoredBias: 0.3
+  };
+  
+  /**
+   * 生成模拟观众名称
+   */
+  private generateViewerNames(count: number): string[] {
+    const prefixes = ['快乐', '神秘', '硬核', '佛系', '狂热', '专业', '菜鸟', '老司机'];
+    const suffixes = ['赌徒', '观众', '玩家', '分析师', '粉丝', '路人'];
+    const names: string[] = [];
     
-    return report;
+    for (let i = 0; i < count; i++) {
+      const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+      const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+      names.push(`${prefix}${suffix}${Math.floor(Math.random() * 999)}`);
+    }
+    
+    return names;
   }
   
   /**
-   * 取消市场（异常情况）
+   * 生成模拟投注
    */
-  async cancelMarket(marketId: string, reason: string): Promise<void> {
-    const allBets = await this.betRepo.getByMarketId(marketId);
+  generateSimulatedBets(market: PredictionMarket): SimulatedBet[] {
+    const bettorCount = this.randomInRange(this.config.minBettors, this.config.maxBettors);
+    const names = this.generateViewerNames(bettorCount);
+    const bets: SimulatedBet[] = [];
     
-    // 全额退款
-    for (const bet of allBets) {
-      await this.tokenService.addTokens(
-        bet.userId,
-        bet.amount,
-        `cancel_refund_${marketId}`
-      );
-      await this.betRepo.settle(bet.id, 'refunded', bet.amount);
+    // 随机选择一个"热门"选项
+    const favoredIndex = Math.floor(Math.random() * market.options.length);
+    
+    for (let i = 0; i < bettorCount; i++) {
+      // 决定投注哪个选项
+      let optionIndex: number;
+      if (Math.random() < this.config.favoredBias) {
+        optionIndex = favoredIndex;  // 投注热门
+      } else {
+        optionIndex = Math.floor(Math.random() * market.options.length);
+      }
+      
+      const amount = this.randomInRange(this.config.minBetAmount, this.config.maxBetAmount);
+      
+      bets.push({
+        viewerName: names[i],
+        optionId: market.options[optionIndex].aiId,
+        amount,
+        timestamp: Date.now() - Math.floor(Math.random() * 60000)  // 过去1分钟内
+      });
     }
     
-    await this.marketRepo.updateStatus(marketId, MarketStatus.CANCELLED);
+    return bets;
+  }
+  
+  private randomInRange(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 }
 
-interface SettlementReport {
-  marketId: string;
-  winningOption: string;
-  totalBets: number;
-  totalPool: number;
-  winnersCount: number;
-  totalPayout: number;
-  houseTake: number;
+interface SimulatedBet {
+  viewerName: string;
+  optionId: string;
+  amount: number;
+  timestamp: number;
 }
 ```
 
----
-
-## 6. API 设计
-
-### 6.1 REST API
+### 4.3 实时模拟投注流
 
 ```typescript
-// 市场相关
-GET    /api/markets                     // 获取所有开放市场
-GET    /api/markets/:id                 // 获取市场详情
-GET    /api/markets/game/:gameId        // 获取游戏相关市场
-
-// 投注相关
-POST   /api/bets                        // 下注
-DELETE /api/bets/:id                    // 取消投注
-GET    /api/bets/user/:userId           // 用户投注历史
-
-// Token 相关
-GET    /api/tokens/balance              // 获取余额
-POST   /api/tokens/claim-daily          // 领取每日奖励
-GET    /api/tokens/transactions         // 交易记录
-
-// 结算相关
-GET    /api/settlements/:marketId       // 获取结算报告
-```
-
-### 6.2 WebSocket 事件
-
-```typescript
-// 客户端 → 服务器
-interface ClientEvents {
-  'join_market': { marketId: string };
-  'leave_market': { marketId: string };
-  'place_bet': PlaceBetRequest;
-}
-
-// 服务器 → 客户端
-interface ServerEvents {
-  'odds_update': OddsUpdate;
-  'market_status_change': { marketId: string; status: MarketStatus };
-  'bet_confirmed': BetResult;
-  'settlement_result': { marketId: string; yourBets: Bet[]; totalPayout: number };
-  'balance_update': { balance: number };
-}
-```
-
-### 6.3 Fastify 路由实现
-
-```typescript
-import Fastify from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
-
-const app = Fastify();
-await app.register(fastifyWebsocket);
-
-// 市场列表
-app.get('/api/markets', async (request, reply) => {
-  const markets = await marketService.getOpenMarkets();
-  return { markets };
-});
-
-// 下注
-app.post('/api/bets', async (request, reply) => {
-  const { userId, marketId, optionId, amount } = request.body as PlaceBetRequest;
+class LiveBetSimulator {
+  private io: Server;
+  private generator: SimulatedAudienceGenerator;
+  private intervals: Map<string, NodeJS.Timer> = new Map();
   
-  // 验证
-  if (amount <= 0 || amount > 1000) {
-    return reply.code(400).send({ error: 'Invalid bet amount (1-1000)' });
-  }
-  
-  const result = await bettingService.placeBet({ userId, marketId, optionId, amount });
-  
-  if (!result.success) {
-    return reply.code(400).send({ error: result.error });
-  }
-  
-  return result;
-});
-
-// WebSocket 连接
-app.get('/ws', { websocket: true }, (connection, req) => {
-  connection.socket.on('message', async (message) => {
-    const data = JSON.parse(message.toString());
-    
-    switch (data.type) {
-      case 'join_market':
-        connection.socket.join(`market:${data.marketId}`);
-        break;
-      case 'place_bet':
-        const result = await bettingService.placeBet(data.payload);
-        connection.socket.send(JSON.stringify({ type: 'bet_confirmed', data: result }));
-        break;
-    }
-  });
-});
-```
-
----
-
-## 7. 数据库设计
-
-### 7.1 PostgreSQL Schema
-
-```sql
--- 用户 Token 账户
-CREATE TABLE user_tokens (
-  user_id VARCHAR(64) PRIMARY KEY,
-  balance INTEGER NOT NULL DEFAULT 0,
-  total_earned INTEGER NOT NULL DEFAULT 0,
-  total_spent INTEGER NOT NULL DEFAULT 0,
-  wallet_address VARCHAR(42),
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Token 交易记录
-CREATE TABLE token_transactions (
-  id SERIAL PRIMARY KEY,
-  user_id VARCHAR(64) NOT NULL,
-  amount INTEGER NOT NULL,
-  type VARCHAR(16) NOT NULL, -- 'credit' | 'debit'
-  reason VARCHAR(128) NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-CREATE INDEX idx_token_tx_user ON token_transactions(user_id);
-
--- 预测市场
-CREATE TABLE prediction_markets (
-  id VARCHAR(64) PRIMARY KEY,
-  game_id VARCHAR(64) NOT NULL,
-  type VARCHAR(32) NOT NULL,
-  question TEXT NOT NULL,
-  total_pool INTEGER DEFAULT 0,
-  status VARCHAR(16) NOT NULL DEFAULT 'open',
-  result VARCHAR(64),
-  closes_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  resolved_at TIMESTAMP
-);
-CREATE INDEX idx_market_game ON prediction_markets(game_id);
-CREATE INDEX idx_market_status ON prediction_markets(status);
-
--- 市场选项
-CREATE TABLE market_options (
-  id VARCHAR(64) PRIMARY KEY,
-  market_id VARCHAR(64) NOT NULL REFERENCES prediction_markets(id),
-  label VARCHAR(128) NOT NULL,
-  total_bets INTEGER DEFAULT 0,
-  bet_count INTEGER DEFAULT 0
-);
-CREATE INDEX idx_option_market ON market_options(market_id);
-
--- 投注记录
-CREATE TABLE bets (
-  id VARCHAR(64) PRIMARY KEY,
-  user_id VARCHAR(64) NOT NULL,
-  market_id VARCHAR(64) NOT NULL REFERENCES prediction_markets(id),
-  option_id VARCHAR(64) NOT NULL REFERENCES market_options(id),
-  amount INTEGER NOT NULL,
-  locked_odds DECIMAL(10, 2) NOT NULL,
-  potential_payout INTEGER NOT NULL,
-  status VARCHAR(16) NOT NULL DEFAULT 'pending',
-  payout INTEGER,
-  created_at TIMESTAMP DEFAULT NOW(),
-  settled_at TIMESTAMP
-);
-CREATE INDEX idx_bet_user ON bets(user_id);
-CREATE INDEX idx_bet_market ON bets(market_id);
-CREATE INDEX idx_bet_status ON bets(status);
-```
-
-### 7.2 Redis 数据结构
-
-```
-# 用户余额缓存
-balance:{userId} -> "1234"
-
-# 每日领取记录
-daily:{userId} -> "Sat Feb 14 2026"
-
-# 市场实时数据
-market:{marketId}:pool -> "50000"
-market:{marketId}:bets:{optionId} -> "12500"
-
-# 活跃用户会话
-session:{userId} -> { socketId, joinedMarkets: [...] }
-```
-
----
-
-## 8. 目录结构
-
-```
-src/
-├── prediction/
-│   ├── index.ts                    # 模块入口
-│   ├── services/
-│   │   ├── betting-service.ts      # 投注服务
-│   │   ├── settlement-service.ts   # 结算服务
-│   │   ├── odds-calculator.ts      # 赔率计算
-│   │   └── odds-update-service.ts  # 实时赔率推送
-│   ├── token/
-│   │   ├── arcade-token-service.ts # Token 管理
-│   │   └── daily-reward.ts         # 每日奖励
-│   ├── repositories/
-│   │   ├── market-repository.ts    # 市场数据访问
-│   │   └── bet-repository.ts       # 投注数据访问
-│   ├── routes/
-│   │   ├── market-routes.ts        # 市场 API
-│   │   ├── bet-routes.ts           # 投注 API
-│   │   └── token-routes.ts         # Token API
-│   ├── websocket/
-│   │   └── market-socket.ts        # WebSocket 处理
-│   └── types/
-│       └── index.ts                # 类型定义
-├── database/
-│   ├── migrations/                 # 数据库迁移
-│   └── seed/                       # 测试数据
-└── tests/
-    └── prediction/
-        ├── betting.test.ts
-        ├── settlement.test.ts
-        └── odds.test.ts
-```
-
----
-
-## 9. 与游戏引擎的集成
-
-### 9.1 事件监听
-
-```typescript
-class GameMarketIntegration {
-  private gameEngine: GameEngine;
-  private marketService: MarketService;
-  
-  initialize() {
-    // 游戏开始时创建市场
-    this.gameEngine.on('game_started', async (event) => {
-      await this.createMarketsForGame(event.gameId, event.players);
-    });
-    
-    // 游戏进入锁定阶段
-    this.gameEngine.on('first_action', async (event) => {
-      await this.lockMarkets(event.gameId);
-    });
-    
-    // 游戏结束时结算
-    this.gameEngine.on('game_ended', async (event) => {
-      await this.settleGameMarkets(event.gameId, event.winner);
-    });
-  }
-  
-  private async createMarketsForGame(gameId: string, players: Player[]) {
-    // 创建"谁会赢"市场
-    const winnerMarket: PredictionMarket = {
-      id: `${gameId}_winner`,
-      gameId,
-      type: MarketType.GAME_WINNER,
-      question: '谁会赢得本局比赛？',
-      options: players.map(p => ({
-        id: p.id,
-        label: `${p.avatar} ${p.name}`,
-        totalBets: 0,
-        odds: players.length, // 初始均等赔率
-        betCount: 0
-      })),
-      status: MarketStatus.OPEN,
-      totalPool: 0,
-      createdAt: Date.now(),
-      closesAt: Date.now() + 60000 // 1分钟后关闭
+  /**
+   * 开始模拟投注流（每3-8秒一笔）
+   */
+  startSimulating(gameId: string, market: PredictionMarket): void {
+    const emit = () => {
+      const bets = this.generator.generateSimulatedBets(market);
+      const bet = bets[Math.floor(Math.random() * bets.length)];
+      
+      // 更新市场数据
+      const option = market.options.find(o => o.aiId === bet.optionId)!;
+      option.totalBets += bet.amount;
+      option.betCount += 1;
+      market.totalPool += bet.amount;
+      
+      // 广播
+      this.io.to(`game:${gameId}`).emit('new_bet', {
+        viewerName: bet.viewerName,
+        optionName: option.aiName,
+        optionAvatar: option.avatar,
+        amount: bet.amount,
+        newTotalPool: market.totalPool
+      });
+      
+      // 随机延迟下一次
+      const delay = 3000 + Math.random() * 5000;
+      this.intervals.set(gameId, setTimeout(emit, delay));
     };
     
-    await this.marketService.createMarket(winnerMarket);
+    emit();
+  }
+  
+  stopSimulating(gameId: string): void {
+    const interval = this.intervals.get(gameId);
+    if (interval) {
+      clearTimeout(interval);
+      this.intervals.delete(gameId);
+    }
   }
 }
 ```
 
 ---
 
-## 10. 开发计划
+## 5. Socket.io 事件
 
-| 任务 | 预计时间 | 优先级 |
-|------|----------|--------|
-| 数据库设计与迁移 | 2h | P0 |
-| Token 服务实现 | 3h | P0 |
-| 赔率计算系统 | 2h | P0 |
-| 投注服务实现 | 3h | P0 |
-| 结算服务实现 | 2h | P0 |
-| REST API 开发 | 3h | P1 |
-| WebSocket 实时推送 | 2h | P1 |
-| 游戏引擎集成 | 2h | P1 |
-| 单元测试 | 3h | P2 |
+### 5.1 服务端事件
 
-**总计**: 约 22 小时（3个工作日）
+```typescript
+// server/socket-handlers/market.ts
+export function setupMarketSocketHandlers(io: Server, marketManager: MarketManager) {
+  io.on('connection', (socket) => {
+    // 加入市场房间
+    socket.on('join_market', (gameId: string) => {
+      socket.join(`market:${gameId}`);
+      
+      const market = marketManager.getMarket(gameId);
+      if (market) {
+        socket.emit('market_state', market);
+      }
+    });
+    
+    // 用户下注
+    socket.on('place_bet', async (data: { gameId: string; aiId: string; amount: number }) => {
+      const userId = socket.data.userId || `anon_${socket.id}`;
+      const success = marketManager.placeBet(data.gameId, userId, data.aiId, data.amount);
+      
+      if (success) {
+        const market = marketManager.getMarket(data.gameId)!;
+        
+        // 通知所有人
+        io.to(`market:${data.gameId}`).emit('bet_placed', {
+          userId,
+          aiId: data.aiId,
+          amount: data.amount,
+          newTotalPool: market.totalPool
+        });
+        
+        // 更新赔率
+        io.to(`market:${data.gameId}`).emit('odds_update', {
+          options: market.options.map(o => ({
+            aiId: o.aiId,
+            totalBets: o.totalBets,
+            betCount: o.betCount,
+            odds: calculatePayoutOdds(market.totalPool, o.totalBets)
+          }))
+        });
+      }
+    });
+  });
+}
+```
+
+### 5.2 客户端事件
+
+| 事件 | 方向 | 数据 |
+|------|------|------|
+| `join_market` | C→S | `{ gameId }` |
+| `market_state` | S→C | `PredictionMarket` |
+| `place_bet` | C→S | `{ gameId, aiId, amount }` |
+| `bet_placed` | S→C | `{ userId, aiId, amount }` |
+| `new_bet` | S→C | 模拟投注（含观众名） |
+| `odds_update` | S→C | 所有选项的新赔率 |
+| `market_locked` | S→C | 市场已锁定 |
+| `market_resolved` | S→C | `SettlementResult` |
 
 ---
 
-## 11. 注意事项
+## 6. 前端组件
 
-1. **防刷保护**：限制单用户投注频率和金额上限
-2. **数据一致性**：使用数据库事务确保扣款和投注原子性
-3. **结算锁定**：使用乐观锁防止重复结算
-4. **实时性**：赔率更新延迟不超过 500ms
-5. **公平性**：游戏开始后禁止投注，结果由可验证的链上数据决定
+### 6.1 投注面板
+
+```tsx
+// components/Market/BettingPanel.tsx
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { socket } from '@/lib/socket';
+
+interface BettingPanelProps {
+  gameId: string;
+  market: PredictionMarket;
+}
+
+export function BettingPanel({ gameId, market }: BettingPanelProps) {
+  const [selectedAi, setSelectedAi] = useState<string | null>(null);
+  const [betAmount, setBetAmount] = useState(10);
+  
+  const handlePlaceBet = () => {
+    if (!selectedAi) return;
+    socket.emit('place_bet', { gameId, aiId: selectedAi, amount: betAmount });
+    setSelectedAi(null);
+  };
+  
+  return (
+    <div className="bg-gray-900 rounded-xl p-4">
+      <h3 className="text-lg font-bold text-white mb-3">
+        🎲 {market.question}
+      </h3>
+      
+      {/* 选项列表 */}
+      <div className="space-y-2 mb-4">
+        {market.options.map(option => {
+          const odds = calculatePayoutOdds(market.totalPool, option.totalBets);
+          
+          return (
+            <motion.button
+              key={option.aiId}
+              onClick={() => setSelectedAi(option.aiId)}
+              whileHover={{ scale: 1.02 }}
+              className={`w-full p-3 rounded-lg flex items-center justify-between
+                ${selectedAi === option.aiId 
+                  ? 'bg-blue-600 border-2 border-blue-400' 
+                  : 'bg-gray-800 hover:bg-gray-700'}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">{option.avatar}</span>
+                <span className="text-white font-medium">{option.aiName}</span>
+              </div>
+              
+              <div className="text-right">
+                <div className="text-yellow-400 font-bold">
+                  {odds.toFixed(2)}x
+                </div>
+                <div className="text-xs text-gray-400">
+                  {option.betCount}人 · ${option.totalBets}
+                </div>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+      
+      {/* 投注金额 */}
+      <div className="flex gap-2 mb-4">
+        {[10, 25, 50, 100].map(amount => (
+          <button
+            key={amount}
+            onClick={() => setBetAmount(amount)}
+            className={`flex-1 py-2 rounded ${
+              betAmount === amount 
+                ? 'bg-yellow-500 text-black' 
+                : 'bg-gray-700 text-white'
+            }`}
+          >
+            ${amount}
+          </button>
+        ))}
+      </div>
+      
+      {/* 下注按钮 */}
+      <button
+        onClick={handlePlaceBet}
+        disabled={!selectedAi || market.status !== 'open'}
+        className="w-full py-3 bg-gradient-to-r from-green-600 to-green-500 
+                   rounded-lg font-bold text-white text-lg
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {market.status === 'open' ? `下注 $${betAmount}` : '投注已截止'}
+      </button>
+      
+      {/* 总池 */}
+      <div className="mt-3 text-center text-gray-400">
+        总奖池: <span className="text-yellow-400 font-bold">${market.totalPool}</span>
+      </div>
+    </div>
+  );
+}
+```
+
+### 6.2 实时投注滚动条
+
+```tsx
+// components/Market/LiveBetFeed.tsx
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { socket } from '@/lib/socket';
+
+interface LiveBet {
+  viewerName: string;
+  optionName: string;
+  optionAvatar: string;
+  amount: number;
+}
+
+export function LiveBetFeed({ gameId }: { gameId: string }) {
+  const [bets, setBets] = useState<LiveBet[]>([]);
+  
+  useEffect(() => {
+    const handleNewBet = (bet: LiveBet) => {
+      setBets(prev => [bet, ...prev.slice(0, 9)]);  // 最多显示10条
+    };
+    
+    socket.on('new_bet', handleNewBet);
+    return () => socket.off('new_bet', handleNewBet);
+  }, []);
+  
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-2 max-h-[200px] overflow-hidden">
+      <div className="text-xs text-gray-500 mb-2">🔴 实时投注</div>
+      
+      <AnimatePresence>
+        {bets.map((bet, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center gap-2 py-1 text-sm"
+          >
+            <span className="text-gray-400">{bet.viewerName}</span>
+            <span className="text-white">押</span>
+            <span>{bet.optionAvatar}</span>
+            <span className="text-yellow-400 font-bold">${bet.amount}</span>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+```
+
+---
+
+## 7. 开发计划
+
+| 任务 | 时间 | 优先级 |
+|------|------|--------|
+| MarketManager 核心 | 2h | P0 |
+| 彩池制结算逻辑 | 1h | P0 |
+| 模拟观众生成器 | 2h | P0 |
+| Socket.io 事件 | 1h | P0 |
+| 前端投注面板 | 2h | P1 |
+
+**总计**: 8h
+
+---
+
+## 8. 演示话术
+
+> "现在让我们看看预测市场！
+>
+> 观众可以在比赛开始前下注，猜测哪个AI会获胜。
+>
+> 你看这里——已经有47个观众下注了，总奖池达到$2,350。
+>
+> 火焰目前是热门，赔率只有1.8倍；而冰山是冷门，赔率高达4.2倍。
+>
+> **[实时投注滚动条展示]**
+>
+> 每隔几秒就有新的投注进来... '狂热赌徒888押火焰$100'...
+>
+> 这用的是彩池制——所有赢家平分输家的筹码。简单、公平、有趣！"
+
+---
+
+## 9. 与其他模块集成
+
+```
+游戏开始前
+    │
+    ▼
+┌─────────────────┐
+│ createMarket()  │ ← 创建预测市场
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│ 模拟投注开始     │ ←模拟观众自动下注
+└────────┬────────┘
+         │
+游戏开始 (5秒倒计时后)
+         │
+┌────────▼────────┐
+│ lockMarket()    │ ← 锁定投注
+└────────┬────────┘
+         │
+游戏进行中...
+         │
+┌────────▼────────┐
+│ resolveMarket() │ ← 结算市场
+└────────┬────────┘
+         │
+    前端展示结果
+```
