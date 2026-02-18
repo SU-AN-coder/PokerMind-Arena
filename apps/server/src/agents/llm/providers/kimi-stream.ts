@@ -19,23 +19,29 @@ export class KimiStreamProvider extends BaseLLMProvider {
     onChunk: (text: string) => void,
     options?: LLMOptions
   ): Promise<string> {
+    const bodyData = JSON.stringify({
+      model: 'moonshot-v1-8k',
+      messages,
+      stream: true,
+      temperature: options?.temperature ?? 0.8,
+      max_tokens: options?.maxTokens ?? 200
+    });
+    
+    // 确保 API key 是纯 ASCII
+    const cleanApiKey = this.apiKey.replace(/[^\x00-\x7F]/g, '');
+    
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
+        'Authorization': `Bearer ${cleanApiKey}`
       },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k',
-        messages,
-        stream: true,
-        temperature: options?.temperature ?? 0.8,
-        max_tokens: options?.maxTokens ?? 200
-      })
+      body: bodyData
     });
     
     if (!response.ok) {
-      throw new Error(`Kimi API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`Kimi API error: ${response.status} - ${errorText}`);
     }
     
     return this.parseSSEStream(

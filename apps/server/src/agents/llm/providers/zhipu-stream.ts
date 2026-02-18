@@ -19,23 +19,30 @@ export class ZhipuStreamProvider extends BaseLLMProvider {
     onChunk: (text: string) => void,
     options?: LLMOptions
   ): Promise<string> {
+    // 确保 body 正确编码为 UTF-8
+    const bodyData = JSON.stringify({
+      model: 'glm-4-flash',  // 免费模型！
+      messages,
+      stream: true,
+      temperature: options?.temperature ?? 0.8,
+      max_tokens: options?.maxTokens ?? 200
+    });
+    
+    // 确保 API key 是纯 ASCII
+    const cleanApiKey = this.apiKey.replace(/[^\x00-\x7F]/g, '');
+    
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
+        'Authorization': `Bearer ${cleanApiKey}`
       },
-      body: JSON.stringify({
-        model: 'glm-4-flash',  // 免费模型！
-        messages,
-        stream: true,
-        temperature: options?.temperature ?? 0.8,
-        max_tokens: options?.maxTokens ?? 200
-      })
+      body: bodyData
     });
     
     if (!response.ok) {
-      throw new Error(`Zhipu API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`Zhipu API error: ${response.status} - ${errorText}`);
     }
     
     return this.parseSSEStream(

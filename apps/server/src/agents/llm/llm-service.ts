@@ -6,8 +6,9 @@ import type { ChatMessage, LLMOptions, LLMProvider } from '../types.js';
 import { ZhipuStreamProvider } from './providers/zhipu-stream.js';
 import { KimiStreamProvider } from './providers/kimi-stream.js';
 import { OpenAIStreamProvider } from './providers/openai-stream.js';
+import { MockLLMProvider } from './providers/mock.js';
 
-export type ProviderType = 'zhipu' | 'kimi' | 'openai';
+export type ProviderType = 'zhipu' | 'kimi' | 'openai' | 'mock';
 
 /**
  * LLM 服务管理器
@@ -15,6 +16,7 @@ export type ProviderType = 'zhipu' | 'kimi' | 'openai';
 export class LLMService {
   private providers: Map<ProviderType, LLMProvider> = new Map();
   private defaultProvider: ProviderType = 'zhipu';
+  private useMock: boolean = false;
   
   constructor() {
     // 从环境变量初始化 providers
@@ -28,19 +30,35 @@ export class LLMService {
     
     if (zhipuKey) {
       this.providers.set('zhipu', new ZhipuStreamProvider(zhipuKey));
+      console.log('   ✅ LLM Provider: Zhipu GLM-4-Flash');
     }
     
     if (kimiKey) {
       this.providers.set('kimi', new KimiStreamProvider(kimiKey));
+      console.log('   ✅ LLM Provider: Kimi Moonshot');
     }
     
     if (openaiKey) {
       this.providers.set('openai', new OpenAIStreamProvider(openaiKey));
+      console.log('   ✅ LLM Provider: OpenAI');
     }
     
+    // 添加 Mock Provider 作为后备
+    this.providers.set('mock', new MockLLMProvider());
+    
     // 设置默认 provider
-    if (this.providers.size > 0) {
-      this.defaultProvider = this.providers.keys().next().value as ProviderType;
+    if (this.providers.size > 1) {  // 除了 mock 还有其他 provider
+      for (const key of this.providers.keys()) {
+        if (key !== 'mock') {
+          this.defaultProvider = key;
+          break;
+        }
+      }
+    } else {
+      // 只有 mock provider
+      this.defaultProvider = 'mock';
+      this.useMock = true;
+      console.log('   ⚠️ 未配置 API Key，使用 Mock LLM Provider');
     }
   }
   
@@ -72,10 +90,18 @@ export class LLMService {
   }
   
   /**
-   * 检查是否有可用的 provider
+   * 检查是否有可用的 provider（非 Mock）
    */
   hasAvailableProvider(): boolean {
-    return this.providers.size > 0;
+    // 有超过一个 provider（包含 mock），说明有真正的 provider
+    return this.providers.size > 1;
+  }
+  
+  /**
+   * 是否使用 Mock Provider
+   */
+  isUsingMock(): boolean {
+    return this.useMock;
   }
   
   /**

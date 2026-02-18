@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+}
+
+.panel {
+  @apply bg-gray-900/70 border border-gray-700 rounded-xl p-3;
+}

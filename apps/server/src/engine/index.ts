@@ -5,6 +5,9 @@
 // 核心引擎
 export { PokerGameEngine } from './poker-engine.js';
 
+// 游戏控制器
+export { GameController } from './game-controller.js';
+
 // 工具函数
 export { 
   createDeck, 
