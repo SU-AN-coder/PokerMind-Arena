@@ -73,6 +73,8 @@ export interface GameState {
   communityCards: CardString[];
   pot: number;
   activePlayerIndex: number;
+  /** 庄家/按钮位置（用于小盲、大盲） */
+  dealerIndex: number;
   deck: CardString[];
   actionHistory: PlayerAction[];
   winner?: Player;
@@ -84,12 +86,18 @@ export interface GameConfig {
   initialChips: number;
   /** 总轮数 */
   roundCount: number;
+  /** 小盲注 */
+  smallBlind: number;
+  /** 大盲注 */
+  bigBlind: number;
 }
 
 /** 默认游戏配置 */
 export const DEFAULT_GAME_CONFIG: GameConfig = {
   initialChips: 100,
-  roundCount: 5
+  roundCount: 5,
+  smallBlind: 10,
+  bigBlind: 20,
 };
 
 // ============ 游戏事件 ============
@@ -106,6 +114,10 @@ export interface RoundStartedEvent {
   round: number;
   pot: number;
   players: Player[];
+  activePlayerIndex?: number;
+  dealerIndex?: number;
+  smallBlind?: number;
+  bigBlind?: number;
 }
 
 /** 发牌事件 */
