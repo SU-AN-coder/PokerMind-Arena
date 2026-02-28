@@ -48,7 +48,9 @@ export class PokerGameEngine extends EventEmitter {
     super();
     this.config = {
       initialChips: config.initialChips ?? 100,
-      roundCount: config.roundCount ?? 5
+      roundCount: config.roundCount ?? 5,
+      smallBlind: config.smallBlind ?? 10,
+      bigBlind: config.bigBlind ?? 20,
     };
     this.state = this.createInitialState();
   }
@@ -64,8 +66,9 @@ export class PokerGameEngine extends EventEmitter {
       communityCards: [],
       pot: 0,
       activePlayerIndex: 0,
+      dealerIndex: 0,
       deck: [],
-      actionHistory: []
+      actionHistory: [],
     };
   }
   
@@ -155,20 +158,28 @@ export class PokerGameEngine extends EventEmitter {
     // 发手牌
     this.dealHoleCards();
     
-    // 收集 ante（每人投入20%）
-    const ante = Math.ceil(this.config.initialChips * 0.2);
-    this.state.pot = 0;
+    const n = this.state.players.length;
+    this.state.dealerIndex = (this.state.round - 1) % n;
+    const sbIndex = (this.state.dealerIndex + 1) % n;
+    const bbIndex = (this.state.dealerIndex + 2) % n;
+    const sb = this.config.smallBlind;
+    const bb = this.config.bigBlind;
     
-    for (const player of this.state.players) {
-      if (player.status === 'active') {
-        const contribution = Math.min(ante, player.chips);
-        player.chips -= contribution;
-        this.state.pot += contribution;
+    this.state.pot = 0;
+    for (let i = 0; i < n; i++) {
+      const p = this.state.players[i];
+      if (p.status !== 'active') continue;
+      let blind = 0;
+      if (i === sbIndex) blind = Math.min(sb, p.chips);
+      else if (i === bbIndex) blind = Math.min(bb, p.chips);
+      if (blind > 0) {
+        p.chips -= blind;
+        this.state.pot += blind;
       }
     }
     
-    // 重置状态
-    this.state.activePlayerIndex = 0;
+    // 第一个行动玩家：大盲下家（preflop 从 bb+1 开始）
+    this.state.activePlayerIndex = (bbIndex + 1) % n;
     this.state.communityCards = [];
     this.state.actionHistory = [];
     this.state.winner = undefined;
@@ -176,7 +187,11 @@ export class PokerGameEngine extends EventEmitter {
     this.emit('round_started', {
       round: this.state.round,
       pot: this.state.pot,
-      players: this.state.players
+      players: this.state.players,
+      activePlayerIndex: this.state.activePlayerIndex,
+      dealerIndex: this.state.dealerIndex,
+      smallBlind: this.config.smallBlind,
+      bigBlind: this.config.bigBlind,
     });
   }
   
@@ -311,8 +326,17 @@ export class PokerGameEngine extends EventEmitter {
     }
     
     this.emit('phase_changed', { phase: this.state.phase });
+
+    // 若无人可行动（全员 all-in 或只剩一人），直接发完牌到摊牌，避免卡在 flop/turn/river
+    if (
+      this.state.phase !== 'showdown' &&
+      this.state.phase !== 'ended' &&
+      this.getCurrentPlayer() === null
+    ) {
+      this.advancePhase();
+    }
   }
-  
+
   // ============ 摊牌与结算 ============
   
   /**
@@ -428,6 +452,13 @@ export class PokerGameEngine extends EventEmitter {
    */
   getPot(): number {
     return this.state.pot;
+  }
+
+  /**
+   * 获取配置（供 getPublicState 等下发小盲/大盲给前端）
+   */
+  getConfig(): GameConfig {
+    return { ...this.config };
   }
   
   // ============ 类型安全的事件发射 ============

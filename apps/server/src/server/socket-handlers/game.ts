@@ -73,17 +73,19 @@ export function setupGameSocketHandlers(
     // ============ 房间管理 ============
     
     socket.on('create_room', (data: { name: string; avatar?: string }) => {
+      // 观战模式：房主不参战，开局为 4 个 AI 对战
       const room = roomManager.createRoom({
         hostId: playerId,
         hostName: data.name,
-        hostAvatar: data.avatar
+        hostAvatar: data.avatar,
+        addHostAsPlayer: false,
       });
       
-      room.sockets.set(playerId, socket);
+      room.spectators.add(socket);
       socket.join(room.id);
       
       socket.emit('room_created', { roomId: room.id });
-      console.log(`[Socket] Room created: ${room.id} by ${playerId}`);
+      console.log(`[Socket] Room created (spectator): ${room.id} by ${playerId}`);
     });
     
     socket.on('join_room', (data: { roomId: string; name: string; avatar?: string }) => {
@@ -105,23 +107,36 @@ export function setupGameSocketHandlers(
     });
     
     socket.on('leave_room', () => {
-      const room = roomManager.getRoomByPlayerId(playerId);
+      const room = roomManager.getRoomByPlayerId(playerId) ?? roomManager.getRoomByOwnerId(playerId);
       if (room) {
         socket.leave(room.id);
-        console.log(`[Socket] Player ${playerId} left room ${room.id}`);
+        console.log(`[Socket] Left room ${room.id} (player/spectator: ${playerId})`);
       }
     });
     
     // ============ 游戏控制 ============
     
     socket.on('start_game', () => {
-      const room = roomManager.getRoomByPlayerId(playerId);
-      if (room) {
-        const success = roomManager.startGame(room.id, playerId);
-        if (success) {
+      const roomAsPlayer = roomManager.getRoomByPlayerId(playerId);
+      const roomAsOwner = roomManager.getRoomByOwnerId(playerId);
+      const room = roomAsPlayer ?? roomAsOwner;
+      if (!room) return;
+      if (roomAsOwner && room.ownerId === playerId) {
+        const result = roomManager.startGameAsSpectatorRoom(room.id, playerId);
+        if (result.success) {
+          console.log(`[Socket] Game started (4 AI) in room ${room.id}`);
+        } else {
+          socket.emit('error', { message: result.error || '开始游戏失败' });
+        }
+        return;
+      }
+      if (roomAsPlayer) {
+        roomManager.addBotsUpTo(room.id, 4);
+        const result = roomManager.startGame(room.id, playerId);
+        if (result.success) {
           console.log(`[Socket] Game started in room ${room.id}`);
         } else {
-          socket.emit('error', { message: '只有房主可以开始游戏' });
+          socket.emit('error', { message: result.error || '只有房主可以开始游戏' });
         }
       }
     });

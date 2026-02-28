@@ -1,0 +1,53 @@
+.card {
+  perspective: 800px;
+}
+
+.inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.faceDown {
+  transform: rotateY(180deg);
+}
+
+.cardFace,
+.cardBack {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.5rem;
+  backface-visibility: hidden;
+  overflow: hidden;
+}
+
+.cardBack {
+  transform: rotateY(180deg);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(201, 168, 76, 0.22), transparent 60%),
+    linear-gradient(135deg, rgba(14, 22, 46, 1) 0%, rgba(8, 14, 28, 1) 55%, rgba(18, 28, 58, 1) 100%);
+}
+
+.cardBack::before {
+  content: '';
+  position: absolute;
+  inset: 10%;
+  border-radius: 0.5rem;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(201, 168, 76, 0.18) 0 8px,
+      transparent 8px 16px
+    );
+  mix-blend-mode: overlay;
+  opacity: 0.85;
+}
+
+.cardBack::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.0) 0 55%, rgba(0, 0, 0, 0.35) 100%);
+}
